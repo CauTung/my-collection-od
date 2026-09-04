@@ -1,0 +1,43 @@
+
+> test
+> vitest run --reporter=basic --no-color
+
+
+⎯⎯⎯⎯⎯⎯⎯ Startup Error ⎯⎯⎯⎯⎯⎯⎯⎯
+Error: Failed to load custom Reporter from basic
+    at loadCustomReporterModule (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/index.B89dZ0-N.js:18397:9)
+    at file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/index.B89dZ0-N.js:18413:23
+    ... 3 lines matching cause stack trace ...
+    at createVitest (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/cli-api.LUtK11-x.js:29:3)
+    at prepareVitest (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/cli-api.LUtK11-x.js:421:14)
+    at startVitest (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/cli-api.LUtK11-x.js:340:14)
+    at start (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/cac.D805sv8h.js:2370:15)
+    at CAC.run (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/cac.D805sv8h.js:2346:2) {
+  [cause]: Error: Failed to load url basic (resolved id: basic). Does the file exist?
+      at reviveInvokeError (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vite/dist/node/module-runner.js:556:14)
+      at Object.invoke (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vite/dist/node/module-runner.js:572:33)
+      at ServerModuleRunner.getModuleInformation (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vite/dist/node/module-runner.js:1213:7)
+      at ServerModuleRunner.import (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vite/dist/node/module-runner.js:1134:23)
+      at loadCustomReporterModule (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/index.B89dZ0-N.js:18395:26)
+      at file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/index.B89dZ0-N.js:18413:23
+      at async Promise.all (index 0)
+      at Vitest._attachProjectServers (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/index.B89dZ0-N.js:20621:20)
+      at Vitest._start (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/index.B89dZ0-N.js:20464:3)
+      at createVitest (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/cli-api.LUtK11-x.js:29:3) {
+    code: 'ERR_LOAD_URL',
+    runnerError: Error: RunnerError
+        at reviveInvokeError (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vite/dist/node/module-runner.js:557:64)
+        at Object.invoke (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vite/dist/node/module-runner.js:572:33)
+        at ServerModuleRunner.getModuleInformation (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vite/dist/node/module-runner.js:1213:7)
+        at ServerModuleRunner.import (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vite/dist/node/module-runner.js:1134:23)
+        at loadCustomReporterModule (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/index.B89dZ0-N.js:18395:26)
+        at file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/index.B89dZ0-N.js:18413:23
+        at async Promise.all (index 0)
+        at Vitest._attachProjectServers (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/index.B89dZ0-N.js:20621:20)
+        at Vitest._start (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/index.B89dZ0-N.js:20464:3)
+        at createVitest (file:///C:/Users/laptop/Documents/my-collection-od/app-shopify/node_modules/vitest/dist/chunks/cli-api.LUtK11-x.js:29:3)
+  }
+}
+
+
+

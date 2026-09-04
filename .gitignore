@@ -1,0 +1,9 @@
+.DS_Store
+.env
+/app-shopify/.env
+/app-shopify/node_modules/
+
+# React Router
+/app-shopify/.react-router/
+/app-shopify/build/
+/app-shopify/.vitest/

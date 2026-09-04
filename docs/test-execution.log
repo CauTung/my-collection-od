@@ -1,0 +1,60 @@
+
+> test
+> vitest run --reporter=verbose
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.0 [39m[90mC:/Users/laptop/Documents/my-collection-od/app-shopify[39m
+
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mfilterCoinLineItems[2m > [22mkeeps a coin item that matches collectibleProductIds (primary signal)[32m 3[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mfilterCoinLineItems[2m > [22mkeeps a coin item whose product_type matches the numismatic list (fallback)[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mfilterCoinLineItems[2m > [22mexcludes an item whose product_type is an accessory type[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mfilterCoinLineItems[2m > [22mexcludes an item whose title contains an accessory keyword[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mfilterCoinLineItems[2m > [22mexcludes an item whose vendor contains an accessory keyword[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mfilterCoinLineItems[2m > [22mexcludes line items with null product_id (shipping/fee lines)[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mfilterCoinLineItems[2m > [22mhandles a mixed order: keeps coins, excludes accessories[32m 2[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mfilterCoinLineItems[2m > [22mreturns empty array when all items are accessories[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mfilterCoinLineItems[2m > [22mis case-insensitive for product_type matching[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mfilterCoinLineItems[2m > [22msilently drops a coin with unusual product_type when collectibleProductIds is empty[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mbuildCollectibleProductIds[2m > [22mbuilds a set containing only products with hasCollectibleData=true[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mbuildCollectibleProductIds[2m > [22mreturns an empty set when all products have no collectible_data metafield[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/product-filter.test.ts[2m > [22mbuildCollectibleProductIds[2m > [22mreturns an empty set for empty input[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/dedup.test.ts[2m > [22mclaimOrderSync[2m > [22mreturns true when metaobjectCreate succeeds (first-time claim)[32m 4[2mms[22m[39m
+ [32m✓[39m tests/unit/dedup.test.ts[2m > [22mclaimOrderSync[2m > [22mreturns false when userErrors contains 'taken' (duplicate claim)[32m 2[2mms[22m[39m
+ [32m✓[39m tests/unit/dedup.test.ts[2m > [22mclaimOrderSync[2m > [22mreturns false when userErrors contains 'already' (alternative duplicate message)[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/dedup.test.ts[2m > [22mclaimOrderSync[2m > [22mreturns false (not throw) on unexpected userErrors — does not crash the webhook[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/dedup.test.ts[2m > [22mclaimOrderSync[2m > [22muses the correct normalized handle format dedup-{customerId}-{orderId}[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/dedup.test.ts[2m > [22mclaimOrderSync[2m > [22muses the correct type for the dedup lock metaobject[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/dedup.test.ts[2m > [22mclaimOrderSync[2m > [22msimulates two concurrent claims — second must return false[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/idempotency.test.ts[2m > [22midempotency cache[2m > [22mreturns null for a key that has never been set[32m 3[2mms[22m[39m
+ [32m✓[39m tests/unit/idempotency.test.ts[2m > [22midempotency cache[2m > [22mreturns the stored result for a key that was set[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/idempotency.test.ts[2m > [22midempotency cache[2m > [22mdouble-submit: two calls with the same key return the same cached result[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/idempotency.test.ts[2m > [22midempotency cache[2m > [22mdifferent keys are stored independently[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/idempotency.test.ts[2m > [22midempotency cache[2m > [22mreturns null for an expired key (past TTL)[32m 3[2mms[22m[39m
+ [32m✓[39m tests/unit/idempotency.test.ts[2m > [22midempotency cache[2m > [22mreturns the result before TTL expires[32m 2[2mms[22m[39m
+ [32m✓[39m tests/unit/idempotency.test.ts[2m > [22midempotency cache[2m > [22mclearIdempotencyCache removes all entries[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/batch-sync.test.ts[2m > [22mtriggerBatchSync[2m > [22mreturns 'queued' and updates state if job slot cannot be acquired[32m 9[2mms[22m[39m
+ [32m✓[39m tests/unit/batch-sync.test.ts[2m > [22mtriggerBatchSync[2m > [22mreturns 'syncing' and updates state if job slot is acquired[32m 4[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyAppProxyHmac[2m > [22mpasses verification when HMAC is correct[32m 7[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyAppProxyHmac[2m > [22mthrows HMAC_INVALID when signature is missing[32m 2[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyAppProxyHmac[2m > [22mthrows HMAC_INVALID when signature is tampered[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyAppProxyHmac[2m > [22mthrows HMAC_INVALID when a query param value is modified after signing[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyAppProxyHmac[2m > [22mis not sensitive to param ordering — sorts params before comparing[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyAppProxyHmac[2m > [22mthrows HMAC_INVALID when signed with a wrong secret[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyWebhookHmac[2m > [22mpasses verification when HMAC header is correct[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyWebhookHmac[2m > [22mthrows HMAC_INVALID when header is null[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyWebhookHmac[2m > [22mthrows HMAC_INVALID when header is tampered[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyWebhookHmac[2m > [22mthrows HMAC_INVALID when body content is modified[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyWebhookHmac[2m > [22mthrows HMAC_INVALID when signed with a wrong secret[32m 0[2mms[22m[39m
+ [32m✓[39m tests/unit/hmac.test.ts[2m > [22mverifyWebhookHmac[2m > [22mis sensitive to raw byte content — whitespace differences break signature[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/stats.test.ts[2m > [22mrecalculateAndCacheStats[2m > [22mcalculates stats correctly for a single page of items[32m 7[2mms[22m[39m
+ [32m✓[39m tests/unit/stats.test.ts[2m > [22mrecalculateAndCacheStats[2m > [22mhandles pagination correctly[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/stats.test.ts[2m > [22mrecalculateAndCacheStats[2m > [22mreturns 0 if customer has no items[32m 1[2mms[22m[39m
+ [32m✓[39m tests/unit/customer-isolation.test.ts[2m > [22mCustomer Data Isolation[2m > [22mmust include exact customer_id in the GraphQL query filter to prevent data leakage[32m 4[2mms[22m[39m
+ [32m✓[39m tests/unit/customer-isolation.test.ts[2m > [22mCustomer Data Isolation[2m > [22mmust retain customer_id in the returned mapped objects for application-level defense-in-depth[32m 2[2mms[22m[39m
+ [32m✓[39m tests/unit/batch-sync-integration.test.ts[2m > [22mBatch Sync Concurrency Integration[2m > [22mprocesses a large number of items in chunks respecting BATCH_SYNC_CONCURRENCY[32m 217[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m8 passed[39m[22m[90m (8)[39m
+[2m      Tests [22m [1m[32m47 passed[39m[22m[90m (47)[39m
+[2m   Start at [22m 20:31:54
+[2m   Duration [22m 726ms[2m (transform 53%, import 23%, tests 17%, worker 7%)[22m
+
