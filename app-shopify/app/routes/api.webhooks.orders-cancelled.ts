@@ -12,51 +12,31 @@
  */
 
 import type { ActionFunctionArgs } from "react-router";
-import { verifyWebhookHmac } from "~/lib/hmac.server";
+import { authenticateWebhookRequest } from "~/lib/webhook.server";
+import { withErrorHandler } from "~/lib/error-handler.server";
 import { claimOrderSync } from "~/lib/dedup.server";
 import { checkProductsHaveCollectibleData } from "~/lib/metafield.server";
-import { findCollectionItemByProduct, updateCollectionItem, deleteCollectionItem } from "~/lib/metaobject.server";
+import { decrementCollectionItemByProduct } from "~/lib/metaobject.server";
 import { filterCoinLineItems, buildCollectibleProductIds } from "~/lib/product-filter.server";
 import { recalculateAndCacheStats } from "~/lib/stats.server";
 import { logger } from "~/lib/logger.server";
-import type { ShopifyOrderPaidPayload } from "~/types";
+import type { ShopifyOrderCancelledPayload } from "~/types";
 
-export async function action({ request }: ActionFunctionArgs) {
+async function actionHandler({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  const hmacHeader = request.headers.get("x-shopify-hmac-sha256");
-  const rawBody = Buffer.from(await request.arrayBuffer());
-
-  try {
-    verifyWebhookHmac(rawBody, hmacHeader);
-  } catch (error) {
-    logger.warn("Webhook HMAC verification failed", { error: String(error) });
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  let payload: ShopifyOrderPaidPayload;
-  try {
-    payload = JSON.parse(rawBody.toString("utf-8"));
-  } catch (error) {
-    logger.error("Failed to parse webhook payload", { error: String(error) });
-    return new Response("Bad Request", { status: 400 });
-  }
+  const payload = await authenticateWebhookRequest<ShopifyOrderCancelledPayload>(
+    request,
+    "orders/cancelled"
+  );
 
   const customerId = payload.customer?.id ? `gid://shopify/Customer/${payload.customer.id}` : null;
   const orderId = payload.id ? `gid://shopify/Order/${payload.id}` : null;
 
   if (!customerId || !orderId) {
     logger.warn("Cancelled order missing customer or order ID", { payloadId: payload.id });
-    return new Response("OK", { status: 200 });
-  }
-
-  // Dedup specifically for cancellation to prevent double-processing the same cancellation
-  const cancelClaimId = `${orderId}-cancel`;
-  const claimed = await claimOrderSync(customerId, cancelClaimId);
-  if (!claimed) {
-    logger.info("Order cancellation already processed", { orderId });
     return new Response("OK", { status: 200 });
   }
 
@@ -81,26 +61,20 @@ export async function action({ request }: ActionFunctionArgs) {
     aggregated.set(gid, (aggregated.get(gid) || 0) + item.quantity);
   }
 
+  const cancelClaimId = `${orderId}-cancel`;
+  const claimed = await claimOrderSync(customerId, cancelClaimId);
+  if (!claimed) {
+    logger.info("Order cancellation already processed", { orderId });
+    return new Response("OK", { status: 200 });
+  }
+
   let hasErrors = false;
 
   // Process decrements sequentially or via Promise.allSettled
   const results = await Promise.allSettled(
-    Array.from(aggregated.entries()).map(async ([productId, cancelQty]) => {
-      const existing = await findCollectionItemByProduct(customerId, productId);
-      if (!existing) return;
-
-      const newQty = existing.item.quantity_owned - cancelQty;
-
-      if (newQty <= 0) {
-        // Soft delete if quantity drops to 0 or below
-        await deleteCollectionItem(customerId, existing.item.item_id);
-      } else {
-        // Just update the quantity
-        await updateCollectionItem(customerId, existing.item.item_id, {
-          quantity_owned: newQty,
-        });
-      }
-    })
+    Array.from(aggregated.entries()).map(([productId, cancelQty]) =>
+      decrementCollectionItemByProduct(customerId, productId, cancelQty)
+    )
   );
 
   for (const result of results) {
@@ -118,3 +92,5 @@ export async function action({ request }: ActionFunctionArgs) {
 
   return new Response(hasErrors ? "Processed with some errors" : "OK", { status: 200 });
 }
+
+export const action = withErrorHandler(actionHandler);

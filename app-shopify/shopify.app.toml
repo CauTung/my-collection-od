@@ -6,7 +6,7 @@ application_url = "https://my-collection-od.vercel.app"
 embedded = true
 
 [access_scopes]
-scopes = "write_app_proxy"
+scopes = "write_app_proxy,read_orders"
 
 [auth]
 redirect_urls = [
@@ -14,7 +14,31 @@ redirect_urls = [
 ]
 
 [webhooks]
-api_version = "2024-01"
+api_version = "2026-07"
+
+[[webhooks.subscriptions]]
+topics = ["orders/paid"]
+uri = "/api/webhooks/orders-paid"
+
+[[webhooks.subscriptions]]
+topics = ["orders/cancelled"]
+uri = "/api/webhooks/orders-cancelled"
+
+[[webhooks.subscriptions]]
+topics = ["refunds/create"]
+uri = "/api/webhooks/refunds-create"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/data_request"]
+uri = "/api/webhooks/customers-data-request"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/redact"]
+uri = "/api/webhooks/customers-redact"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["shop/redact"]
+uri = "/api/webhooks/shop-redact"
 
 [app_proxy]
 url = "https://my-collection-od.vercel.app"

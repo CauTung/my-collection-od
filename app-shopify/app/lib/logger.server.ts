@@ -26,6 +26,8 @@ const PII_FIELDS = new Set([
   "country",
   "name",
   "customer_email",
+  "customer_id",
+  "customerid",
   "note",
 ]);
 

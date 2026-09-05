@@ -9,7 +9,11 @@ import { type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { listCollectionItems, createCollectionItem } from "~/lib/metaobject.server";
 import { recalculateAndCacheStats } from "~/lib/stats.server";
-import { checkAndClaimIdempotencyKey, setIdempotentResult } from "~/lib/idempotency.server";
+import {
+  checkAndClaimIdempotencyKey,
+  releaseIdempotencyClaim,
+  setIdempotentResult,
+} from "~/lib/idempotency.server";
 import { withErrorHandler, AppError } from "~/lib/error-handler.server";
 import { ErrorCode, type CollectionFilters } from "~/types";
 import { AddItemSchema as CollectionItemSchema } from "~/lib/validation/schemas";
@@ -88,10 +92,16 @@ async function actionHandler({ request }: ActionFunctionArgs) {
   }
 
   // Create Item
-  const newItem = await createCollectionItem(session.customer_id, {
-    ...data,
-    source: "manual_entry",
-  });
+  let newItem: Awaited<ReturnType<typeof createCollectionItem>>;
+  try {
+    newItem = await createCollectionItem(session.customer_id, {
+      ...data,
+      source: "manual_entry",
+    });
+  } catch (error) {
+    releaseIdempotencyClaim(idempotencyScope, idempotencyKey);
+    throw error;
+  }
 
   // Background stats update
   try {

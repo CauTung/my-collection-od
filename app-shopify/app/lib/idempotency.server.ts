@@ -98,6 +98,21 @@ export function setIdempotentResult<T>(scope: IdempotencyScope, key: string, res
   logger.debug("Idempotency result cached", { key, ttlMs: IDEMPOTENCY_KEY_TTL_MS });
 }
 
+/**
+ * Release a processing claim after its mutation fails so the same request can be retried.
+ * A completed result is never removed by this operation.
+ *
+ * @param scope - Authenticated customer and mutation resource scope.
+ * @param key - The idempotency_key UUID from the request body.
+ */
+export function releaseIdempotencyClaim(scope: IdempotencyScope, key: string): void {
+  const cacheKey = buildScopedCacheKey(scope, key);
+  const entry = cache.get(cacheKey);
+  if (entry?.result === "processing") {
+    cache.delete(cacheKey);
+  }
+}
+
 function buildScopedCacheKey(scope: IdempotencyScope, key: string): string {
   return JSON.stringify([
     scope.customerId,

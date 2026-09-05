@@ -12,8 +12,9 @@
  */
 
 import type { ActionFunctionArgs } from "react-router";
-import { verifyWebhookHmac } from "~/lib/hmac.server";
-import { claimOrderSync } from "~/lib/dedup.server";
+import { authenticateWebhookRequest } from "~/lib/webhook.server";
+import { withErrorHandler } from "~/lib/error-handler.server";
+import { claimOrderSync, isOrderSyncClaimed } from "~/lib/dedup.server";
 import { checkProductsHaveCollectibleData } from "~/lib/metafield.server";
 import { upsertCollectionItemByProduct } from "~/lib/metaobject.server";
 import { filterCoinLineItems, buildCollectibleProductIds } from "~/lib/product-filter.server";
@@ -21,32 +22,15 @@ import { recalculateAndCacheStats } from "~/lib/stats.server";
 import { logger } from "~/lib/logger.server";
 import type { ShopifyOrderPaidPayload } from "~/types";
 
-export async function action({ request }: ActionFunctionArgs) {
+async function actionHandler({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  const hmacHeader = request.headers.get("x-shopify-hmac-sha256");
-
-  // Clone request to read body raw for HMAC, and json for parsing
-  const rawBody = Buffer.from(await request.arrayBuffer());
-
-  // verifyWebhookHmac throws AppError if invalid, handled by global boundary (if we had one)
-  // But for webhooks, it's safer to catch and return 401 manually if we aren't using a wrapper.
-  try {
-    verifyWebhookHmac(rawBody, hmacHeader);
-  } catch (error) {
-    logger.warn("Webhook HMAC verification failed", { error: String(error) });
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  let payload: ShopifyOrderPaidPayload;
-  try {
-    payload = JSON.parse(rawBody.toString("utf-8"));
-  } catch (error) {
-    logger.error("Failed to parse webhook payload", { error: String(error) });
-    return new Response("Bad Request", { status: 400 });
-  }
+  const payload = await authenticateWebhookRequest<ShopifyOrderPaidPayload>(
+    request,
+    "orders/paid"
+  );
 
   const customerId = payload.customer?.id ? `gid://shopify/Customer/${payload.customer.id}` : null;
   const orderId = payload.id ? `gid://shopify/Order/${payload.id}` : null;
@@ -54,13 +38,6 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!customerId || !orderId) {
     logger.warn("Order missing customer or order ID, skipping", { payloadId: payload.id });
     return new Response("OK", { status: 200 }); // Return 200 so Shopify doesn't retry
-  }
-
-  // 1. Atomic Deduplication
-  const claimed = await claimOrderSync(customerId, orderId);
-  if (!claimed) {
-    logger.info("Order already processed (dedup locked)", { orderId });
-    return new Response("OK", { status: 200 });
   }
 
   const rawLineItems = payload.line_items || [];
@@ -95,6 +72,22 @@ export async function action({ request }: ActionFunctionArgs) {
     } else {
       aggregated.set(gid, { quantity: item.quantity, price });
     }
+  }
+
+  const cancellationClaimId = `${orderId}-cancel`;
+  if (await isOrderSyncClaimed(customerId, cancellationClaimId)) {
+    logger.info("Skipping paid order because its cancellation was already processed", {
+      orderId,
+    });
+    return new Response("OK", { status: 200 });
+  }
+
+  // Claim only after all read-only prerequisites succeed. A transient product lookup
+  // failure must not create a permanent order lock before any item can be processed.
+  const claimed = await claimOrderSync(customerId, orderId);
+  if (!claimed) {
+    logger.info("Order already processed (dedup locked)", { orderId });
+    return new Response("OK", { status: 200 });
   }
 
   const purchaseDate = payload.created_at?.split("T")[0] || new Date().toISOString().split("T")[0];
@@ -133,3 +126,5 @@ export async function action({ request }: ActionFunctionArgs) {
   // and risking duplicate items if upsert isn't perfectly idempotent under extreme failure.
   return new Response(hasErrors ? "Processed with some errors" : "OK", { status: 200 });
 }
+
+export const action = withErrorHandler(actionHandler);

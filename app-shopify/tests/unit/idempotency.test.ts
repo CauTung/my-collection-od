@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   checkAndClaimIdempotencyKey,
   setIdempotentResult,
+  releaseIdempotencyClaim,
   clearIdempotencyCache,
   getIdempotencyCacheSize,
 } from "~/lib/idempotency.server";
@@ -145,5 +146,32 @@ describe("idempotency cache", () => {
 
     expect(checkAndClaimIdempotencyKey(updateScope, sharedKey)).toEqual({ status: "claimed" });
     expect(getIdempotencyCacheSize()).toBe(2);
+  });
+
+  it("allows the same request to retry after a failed processing claim is released", () => {
+    const key = "retry-after-failure";
+
+    expect(checkAndClaimIdempotencyKey(CUSTOMER_A_CREATE, key)).toEqual({
+      status: "claimed",
+    });
+    releaseIdempotencyClaim(CUSTOMER_A_CREATE, key);
+
+    expect(checkAndClaimIdempotencyKey(CUSTOMER_A_CREATE, key)).toEqual({
+      status: "claimed",
+    });
+    expect(getIdempotencyCacheSize()).toBe(1);
+  });
+
+  it("does not remove a completed result when release is called late", () => {
+    const key = "completed-result";
+    const result = { item: "created-item" };
+
+    setIdempotentResult(CUSTOMER_A_CREATE, key, result);
+    releaseIdempotencyClaim(CUSTOMER_A_CREATE, key);
+
+    expect(checkAndClaimIdempotencyKey(CUSTOMER_A_CREATE, key)).toEqual({
+      status: "finished",
+      result,
+    });
   });
 });

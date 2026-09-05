@@ -19,6 +19,7 @@ import { logger } from "./logger.server";
 /** Maps ErrorCode to HTTP status. Keeps HTTP concerns out of business logic. */
 const ERROR_HTTP_STATUS: Record<ErrorCode, number> = {
   [ErrorCode.HMAC_INVALID]: 401,
+  [ErrorCode.WEBHOOK_INVALID_PAYLOAD]: 400,
   [ErrorCode.CUSTOMER_NOT_AUTHENTICATED]: 401,
   [ErrorCode.ITEM_NOT_FOUND]: 404,
   [ErrorCode.ITEM_ACCESS_DENIED]: 403,

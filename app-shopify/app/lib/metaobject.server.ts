@@ -18,9 +18,14 @@ import { shopifyGraphQL } from "./graphql-client.server";
 import { AppError } from "./error-handler.server";
 import { ErrorCode, type CollectionItem, type CollectionFilters, type CollectionPage } from "~/types";
 import { logger } from "./logger.server";
-import { COLLECTION_PAGE_SIZE } from "~/config/constants";
+import {
+  COLLECTION_ITEM_METAOBJECT_TYPE,
+  COLLECTION_PAGE_SIZE,
+  MAX_QUANTITY_OWNED,
+  METAOBJECT_MAX_PAGE_SIZE,
+} from "~/config/constants";
 
-const ITEM_TYPE = "collection_item";
+const productUpsertTails = new Map<string, Promise<void>>();
 
 /** Helper to extract numeric ID from a GID. */
 function extractNumericId(gid: string): string {
@@ -93,7 +98,7 @@ async function findExistingItemByProduct(customerId: string, productId: string) 
     };
   }>(
     `query FindExistingItem($query: String!) {
-      metaobjects(type: "${ITEM_TYPE}", first: 1, query: $query) {
+      metaobjects(type: "${COLLECTION_ITEM_METAOBJECT_TYPE}", first: 1, query: $query) {
         nodes {
           id
           fields { key value }
@@ -103,11 +108,16 @@ async function findExistingItemByProduct(customerId: string, productId: string) 
     { query: queryStr }
   );
 
-  if (!searchResult.data?.metaobjects?.nodes?.length) {
+  const metaobjects = searchResult.data?.metaobjects;
+  if (!metaobjects) {
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not return the item search payload");
+  }
+
+  if (!metaobjects.nodes?.length) {
     return null;
   }
 
-  const node = searchResult.data.metaobjects.nodes[0];
+  const node = metaobjects.nodes[0];
   return {
     id: node.id,
     item: mapMetaobjectToItem(node),
@@ -137,11 +147,12 @@ export async function createCollectionItem(
     item_id: itemId,
     customer_id: customerId,
     source: "manual_entry" as const,
-    quantity_owned: data.quantity_owned || 1,
+    quantity_owned: data.quantity_owned ?? 1,
     is_deleted: false,
     date_added_to_collection: new Date().toISOString().split("T")[0],
   };
 
+  assertValidQuantity(newItem.quantity_owned);
   const handle = buildItemHandle(customerId, itemId);
 
   interface CreateResponse {
@@ -160,17 +171,25 @@ export async function createCollectionItem(
     }`,
     {
       metaobject: {
-        type: ITEM_TYPE,
+        type: COLLECTION_ITEM_METAOBJECT_TYPE,
         handle,
-        fields: formatFields(newItem),
+        fields: [{ key: "item_id", value: itemId }, ...formatFields(newItem)],
       },
     }
   );
 
   const errors = result.data?.metaobjectCreate?.userErrors || [];
   if (errors.length > 0) {
-    logger.error("Failed to create manual item metaobject", { errors, data: newItem });
+    logger.error("Failed to create manual item metaobject", { errors, customerId, itemId });
     throw new AppError(ErrorCode.VALIDATION_ERROR, "Failed to create item");
+  }
+
+  if (!result.data?.metaobjectCreate?.metaobject) {
+    logger.error("Manual item creation returned no metaobject and no userErrors", {
+      customerId,
+      itemId,
+    });
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not create the collection item");
   }
 
   return newItem as CollectionItem;
@@ -187,11 +206,59 @@ export async function upsertCollectionItemByProduct(
   productId: string,
   additionalData: Partial<CollectionItem>
 ): Promise<void> {
+  const additionalQuantity = additionalData.quantity_owned ?? 1;
+  assertValidQuantity(additionalQuantity);
+  const lockKey = `${customerId}:${productId}`;
+  await runWithProductUpsertLock(lockKey, () =>
+    upsertCollectionItemByProductUnlocked(
+      customerId,
+      productId,
+      additionalData,
+      additionalQuantity
+    )
+  );
+}
+
+/**
+ * Decrement one customer/product quantity for cancellation and refund webhooks.
+ * Same-instance operations share the product lock with upserts to avoid lost updates.
+ */
+export async function decrementCollectionItemByProduct(
+  customerId: string,
+  productId: string,
+  decrementQuantity: number
+): Promise<void> {
+  assertValidQuantity(decrementQuantity);
+  const lockKey = `${customerId}:${productId}`;
+  await runWithProductUpsertLock(lockKey, async () => {
+    const existing = await findExistingItemByProduct(customerId, productId);
+    if (!existing) {
+      return;
+    }
+
+    const newQuantity = existing.item.quantity_owned - decrementQuantity;
+    if (newQuantity <= 0) {
+      await updateCollectionItemRaw(existing.id, { is_deleted: true });
+      return;
+    }
+
+    assertValidQuantity(newQuantity);
+    await updateCollectionItemRaw(existing.id, { quantity_owned: newQuantity });
+  });
+}
+
+async function upsertCollectionItemByProductUnlocked(
+  customerId: string,
+  productId: string,
+  additionalData: Partial<CollectionItem>,
+  additionalQuantity: number
+): Promise<void> {
   const existing = await findExistingItemByProduct(customerId, productId);
 
   if (existing) {
     // UPDATE existing (increment quantity)
-    const newQuantity = existing.item.quantity_owned + (additionalData.quantity_owned || 1);
+    const newQuantity = existing.item.quantity_owned + additionalQuantity;
+    assertValidQuantity(newQuantity);
     
     logger.info("Upsert: Found existing item, incrementing quantity", {
       customerId,
@@ -215,25 +282,79 @@ export async function upsertCollectionItemByProduct(
       handle,
     });
 
-    await shopifyGraphQL(
+    const result = await shopifyGraphQL<{
+      metaobjectCreate?: {
+        metaobject?: { id: string } | null;
+        userErrors?: Array<{ field: string[] | null; message: string }>;
+      };
+    }>(
       `mutation CreateCollectionItem($input: MetaobjectCreateInput!) {
         metaobjectCreate(metaobject: $input) {
+          metaobject { id }
           userErrors { field message }
         }
       }`,
       {
         input: {
-          type: ITEM_TYPE,
+          type: COLLECTION_ITEM_METAOBJECT_TYPE,
           handle,
           fields: [
             { key: "item_id", value: itemId },
             { key: "customer_id", value: customerId },
             { key: "product_id", value: productId },
+            { key: "date_added_to_collection", value: new Date().toISOString().split("T")[0] },
+            { key: "is_deleted", value: "false" },
             ...formatFields(additionalData),
           ],
         },
       }
     );
+
+    const mutation = result.data?.metaobjectCreate;
+    const errors = mutation?.userErrors ?? [];
+    if (errors.length > 0) {
+      logger.error("Failed to create synced collection item", {
+        customerId,
+        productId,
+        errors,
+      });
+      throw new AppError(ErrorCode.GRAPHQL_ERROR, "Failed to create synced collection item");
+    }
+
+    if (!mutation?.metaobject) {
+      logger.error("Synced item creation returned no metaobject and no userErrors", {
+        customerId,
+        productId,
+      });
+      throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not create the synced item");
+    }
+  }
+}
+
+/**
+ * Serialize upserts for one customer/product within the current server instance.
+ * This prevents same-instance webhook and batch jobs from losing read-modify-write increments.
+ */
+async function runWithProductUpsertLock<T>(
+  lockKey: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const previousTail = productUpsertTails.get(lockKey) ?? Promise.resolve();
+  let releaseCurrent: () => void = () => undefined;
+  const currentLock = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const currentTail = previousTail.then(() => currentLock);
+  productUpsertTails.set(lockKey, currentTail);
+
+  await previousTail;
+  try {
+    return await operation();
+  } finally {
+    releaseCurrent();
+    if (productUpsertTails.get(lockKey) === currentTail) {
+      productUpsertTails.delete(lockKey);
+    }
   }
 }
 
@@ -262,7 +383,7 @@ export async function getCollectionItem(customerId: string, itemId: string): Pro
         fields { key value }
       }
     }`,
-    { handle: { type: ITEM_TYPE, handle } }
+    { handle: { type: COLLECTION_ITEM_METAOBJECT_TYPE, handle } }
   );
 
   const node = result.data?.metaobjectByHandle;
@@ -315,7 +436,7 @@ export async function listCollectionItems(
 
   const result = await shopifyGraphQL<ListItemsResponse>(
     `query ListItems($query: String!, $first: Int!, $after: String) {
-      metaobjects(type: "${ITEM_TYPE}", first: $first, after: $after, query: $query) {
+      metaobjects(type: "${COLLECTION_ITEM_METAOBJECT_TYPE}", first: $first, after: $after, query: $query) {
         nodes {
           id
           handle
@@ -373,7 +494,7 @@ export async function updateCollectionItem(
     `query GetItem($handle: MetaobjectHandleInput!) {
       metaobjectByHandle(handle: $handle) { id fields { key value } }
     }`,
-    { handle: { type: ITEM_TYPE, handle } }
+    { handle: { type: COLLECTION_ITEM_METAOBJECT_TYPE, handle } }
   );
 
   const node = getResult.data?.metaobjectByHandle;
@@ -416,7 +537,13 @@ async function updateCollectionItemRaw(metaobjectId: string, updates: Partial<Co
     }
   );
 
-  const errors = result.data?.metaobjectUpdate?.userErrors || [];
+  const mutation = result.data?.metaobjectUpdate;
+  if (!mutation) {
+    logger.error("Item update returned no mutation payload", { metaobjectId });
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not update the collection item");
+  }
+
+  const errors = mutation.userErrors || [];
   if (errors.length > 0) {
     logger.error("Failed to update metaobject", { metaobjectId, errors });
     throw new AppError(ErrorCode.VALIDATION_ERROR, "Failed to update item");
@@ -428,4 +555,88 @@ async function updateCollectionItemRaw(metaobjectId: string, updates: Partial<Co
  */
 export async function deleteCollectionItem(customerId: string, itemId: string): Promise<void> {
   await updateCollectionItem(customerId, itemId, { is_deleted: true });
+}
+
+/**
+ * Permanently delete a customer-owned item for a verified privacy redaction request.
+ * Normal collection deletion remains soft-delete; this method is GDPR-only.
+ */
+export async function listCollectionMetaobjectsForPrivacyDeletion(
+  customerId: string
+): Promise<Array<{ id: string; itemId: string }>> {
+  const result = await shopifyGraphQL<{
+    metaobjects?: {
+      nodes?: Array<{
+        id: string;
+        fields?: Array<{ key: string; value: string }>;
+      }>;
+    };
+  }>(
+    `query ListItemsForPrivacyDeletion($query: String!, $first: Int!) {
+      metaobjects(type: "${COLLECTION_ITEM_METAOBJECT_TYPE}", first: $first, query: $query) {
+        nodes {
+          id
+          fields { key value }
+        }
+      }
+    }`,
+    {
+      query: `customer_id:'${customerId}'`,
+      first: METAOBJECT_MAX_PAGE_SIZE,
+    }
+  );
+
+  const metaobjects = result.data?.metaobjects;
+  if (!metaobjects) {
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not return privacy deletion items");
+  }
+
+  return (metaobjects.nodes ?? [])
+    .map((node) => ({ node, item: mapMetaobjectToItem(node) }))
+    .filter(({ item }) => item.customer_id === customerId)
+    .map(({ node, item }) => ({ id: node.id, itemId: item.item_id }));
+}
+
+/** Permanently delete a previously customer-filtered metaobject for GDPR redaction. */
+export async function hardDeleteCollectionMetaobject(
+  customerId: string,
+  metaobjectId: string
+): Promise<void> {
+  const result = await shopifyGraphQL<{
+    metaobjectDelete?: {
+      deletedId?: string | null;
+      userErrors?: Array<{ field: string[] | null; message: string }>;
+    };
+  }>(
+    `mutation DeleteCollectionItemForPrivacy($id: ID!) {
+      metaobjectDelete(id: $id) {
+        deletedId
+        userErrors { field message }
+      }
+    }`,
+    { id: metaobjectId }
+  );
+
+  const mutation = result.data?.metaobjectDelete;
+  if (mutation?.userErrors?.length) {
+    logger.error("Privacy deletion returned userErrors", {
+      customerId,
+      metaobjectId,
+      errors: mutation.userErrors,
+    });
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Failed to permanently delete customer item");
+  }
+
+  if (mutation?.deletedId !== metaobjectId) {
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not confirm customer item deletion");
+  }
+}
+
+function assertValidQuantity(quantity: number): void {
+  if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > MAX_QUANTITY_OWNED) {
+    throw new AppError(
+      ErrorCode.VALIDATION_ERROR,
+      `Quantity must be an integer between 1 and ${MAX_QUANTITY_OWNED}`
+    );
+  }
 }

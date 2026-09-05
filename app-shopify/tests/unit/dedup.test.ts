@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { claimOrderSync } from "~/lib/dedup.server";
+import { claimOrderSync, isOrderSyncClaimed } from "~/lib/dedup.server";
 
 // Mock the GraphQL client — dedup.server.ts uses shopifyGraphQL internally
 vi.mock("~/lib/graphql-client.server", () => ({
@@ -154,5 +154,34 @@ describe("claimOrderSync", () => {
 
     expect(successCount).toBe(1);
     expect(failCount).toBe(1);
+  });
+
+  it("checks an existing cancellation claim using the canonical O(1) handle", async () => {
+    mockGraphQL.mockResolvedValueOnce({
+      data: {
+        metaobjectByHandle: { id: "gid://shopify/Metaobject/cancel-lock" },
+      },
+    });
+
+    await expect(
+      isOrderSyncClaimed(CUSTOMER_GID, `${ORDER_GID}-cancel`)
+    ).resolves.toBe(true);
+
+    const [query, variables] = mockGraphQL.mock.calls[0];
+    expect(query).toContain("query GetOrderSyncClaim");
+    expect(variables).toEqual({
+      handle: {
+        type: "collection_dedup_lock",
+        handle: "dedup-12345-67890-cancel",
+      },
+    });
+  });
+
+  it("rejects a dedup lookup response that omits the expected payload", async () => {
+    mockGraphQL.mockResolvedValueOnce({ data: {} });
+
+    await expect(isOrderSyncClaimed(CUSTOMER_GID, ORDER_GID)).rejects.toThrow(
+      "Shopify did not return the dedup lookup payload"
+    );
   });
 });

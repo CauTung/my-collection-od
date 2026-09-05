@@ -23,6 +23,12 @@ export const HISTORICAL_SYNC_LOOKBACK_YEARS = 10;
 export const HISTORICAL_SYNC_MAX_ORDERS = 200;
 
 // ─── Collection Item Constraints ─────────────────────────────────────────────
+/** Shopify metaobject type used for collector-owned items. */
+export const COLLECTION_ITEM_METAOBJECT_TYPE = "collection_item";
+
+/** Shopify metaobject type used for atomic order event claims. */
+export const COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE = "collection_dedup_lock";
+
 /** Maximum quantity allowed for a single item in the collection. */
 export const MAX_QUANTITY_OWNED = 999;
 
@@ -83,6 +89,9 @@ export const MAX_CONCURRENT_BATCH_SYNC_JOBS = 10;
 // ─── Pagination ───────────────────────────────────────────────────────────────
 /** Number of items per page in the Collection list (cursor-based pagination). */
 export const COLLECTION_PAGE_SIZE = 50;
+
+/** Maximum page size used by Shopify Metaobject connection queries. */
+export const METAOBJECT_MAX_PAGE_SIZE = 250;
 
 // ─── Idempotency ─────────────────────────────────────────────────────────────
 /**

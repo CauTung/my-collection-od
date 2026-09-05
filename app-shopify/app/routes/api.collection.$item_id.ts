@@ -9,7 +9,11 @@ import { type ActionFunctionArgs } from "react-router";
 import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { updateCollectionItem, deleteCollectionItem } from "~/lib/metaobject.server";
 import { recalculateAndCacheStats } from "~/lib/stats.server";
-import { checkAndClaimIdempotencyKey, setIdempotentResult } from "~/lib/idempotency.server";
+import {
+  checkAndClaimIdempotencyKey,
+  releaseIdempotencyClaim,
+  setIdempotentResult,
+} from "~/lib/idempotency.server";
 import { withErrorHandler, AppError } from "~/lib/error-handler.server";
 import { ErrorCode } from "~/types";
 import { UpdateItemSchema } from "~/lib/validation/schemas";
@@ -57,7 +61,12 @@ async function actionHandler({ request, params }: ActionFunctionArgs) {
     // Extract exactly what we want to update, excluding idempotency_key
     const updates = Object.fromEntries(Object.entries(data).filter(([k]) => k !== "idempotency_key"));
 
-    await updateCollectionItem(session.customer_id, itemId, updates);
+    try {
+      await updateCollectionItem(session.customer_id, itemId, updates);
+    } catch (error) {
+      releaseIdempotencyClaim(idempotencyScope, idempotencyKey);
+      throw error;
+    }
 
     // Background stats update
     try {

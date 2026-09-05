@@ -6,33 +6,26 @@
  */
 
 import type { ActionFunctionArgs } from "react-router";
-import { verifyWebhookHmac } from "~/lib/hmac.server";
-import { listCollectionItems, deleteCollectionItem } from "~/lib/metaobject.server";
+import { authenticateWebhookRequest } from "~/lib/webhook.server";
+import {
+  hardDeleteCollectionMetaobject,
+  listCollectionMetaobjectsForPrivacyDeletion,
+} from "~/lib/metaobject.server";
+import { withErrorHandler } from "~/lib/error-handler.server";
 import { logger } from "~/lib/logger.server";
 
-export async function action({ request }: ActionFunctionArgs) {
+interface CustomerRedactPayload {
+  customer?: { id?: number | string };
+}
+
+async function actionHandler({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
-  const hmacHeader = request.headers.get("x-shopify-hmac-sha256");
-  const rawBody = Buffer.from(await request.arrayBuffer());
-  
-  try {
-    verifyWebhookHmac(rawBody, hmacHeader);
-  } catch (error) {
-    logger.warn("Webhook HMAC verification failed (GDPR customers/redact)", { error: String(error) });
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(rawBody.toString("utf-8"));
-  } catch (error) {
-    logger.error("Failed to parse GDPR webhook payload", { error: String(error) });
-    return new Response("Bad Request", { status: 400 });
-  }
-
-  const customer = payload.customer as { id?: number | string } | undefined;
-  const customerIdRaw = customer?.id;
+  const payload = await authenticateWebhookRequest<CustomerRedactPayload>(
+    request,
+    "customers/redact"
+  );
+  const customerIdRaw = payload.customer?.id;
   if (!customerIdRaw) {
     return new Response("OK", { status: 200 }); // Nothing to redact
   }
@@ -40,32 +33,24 @@ export async function action({ request }: ActionFunctionArgs) {
   const customerId = `gid://shopify/Customer/${customerIdRaw}`;
   logger.info("Processing customers/redact", { customerId });
 
-  // Paginating through all customer items and soft-deleting them
-  let hasNextPage = true;
-  let cursor: string | undefined = undefined;
-
-  try {
-    while (hasNextPage) {
-      const result = await listCollectionItems(customerId, {
-        first: 250,
-        after: cursor,
-      });
-
-      const promises = result.items.map((item) =>
-        deleteCollectionItem(customerId, item.item_id).catch((err) => {
-          logger.error("Failed to delete item during redact", { itemId: item.item_id, error: String(err) });
-        })
-      );
-      
-      await Promise.all(promises);
-
-      hasNextPage = result.pageInfo.hasNextPage;
-      cursor = result.pageInfo.endCursor || undefined;
+  // Re-read the first page after each hard-delete batch. Reusing cursors while deleting
+  // the underlying connection can skip records as the result set shrinks.
+  while (true) {
+    const items = await listCollectionMetaobjectsForPrivacyDeletion(customerId);
+    if (items.length === 0) {
+      break;
     }
-  } catch (error) {
-    logger.error("Error during customers/redact processing", { customerId, error: String(error) });
+    const deletions = await Promise.allSettled(
+      items.map((item) => hardDeleteCollectionMetaobject(customerId, item.id))
+    );
+    const failures = deletions.filter((result) => result.status === "rejected");
+    if (failures.length > 0) {
+      throw failures[0].reason;
+    }
   }
 
   // Acknowledge receipt to Shopify
   return new Response("OK", { status: 200 });
 }
+
+export const action = withErrorHandler(actionHandler);

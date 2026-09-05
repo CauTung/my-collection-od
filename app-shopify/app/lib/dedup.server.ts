@@ -19,8 +19,7 @@ import { shopifyGraphQL, isDuplicateHandleError } from "./graphql-client.server"
 import { logger } from "./logger.server";
 import { AppError } from "./error-handler.server";
 import { ErrorCode } from "~/types";
-
-const DEDUP_LOCK_TYPE = "collection_dedup_lock";
+import { COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE } from "~/config/constants";
 
 /**
  * Extract the numeric part from a Shopify GID.
@@ -73,7 +72,7 @@ export async function claimOrderSync(customerId: string, orderId: string): Promi
     }`,
     {
       input: {
-        type: DEDUP_LOCK_TYPE,
+        type: COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE,
         handle,
         fields: [
           { key: "customer_id", value: customerId },
@@ -118,4 +117,31 @@ export async function claimOrderSync(customerId: string, orderId: string): Promi
 
   logger.info("Dedup: order claimed successfully", { handle, customerId, orderId });
   return true;
+}
+
+/**
+ * Check an event claim by its canonical handle without scanning dedup metaobjects.
+ * Used to prevent a late orders/paid delivery from recreating a cancelled order.
+ */
+export async function isOrderSyncClaimed(customerId: string, orderId: string): Promise<boolean> {
+  const handle = buildDedupHandle(customerId, orderId);
+  const result = await shopifyGraphQL<{
+    metaobjectByHandle?: { id: string } | null;
+  }>(
+    `query GetOrderSyncClaim($handle: MetaobjectHandleInput!) {
+      metaobjectByHandle(handle: $handle) { id }
+    }`,
+    {
+      handle: {
+        type: COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE,
+        handle,
+      },
+    }
+  );
+
+  if (!result.data || !("metaobjectByHandle" in result.data)) {
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not return the dedup lookup payload");
+  }
+
+  return Boolean(result.data.metaobjectByHandle);
 }
