@@ -12,19 +12,31 @@ import { withErrorHandler } from "~/lib/error-handler.server";
 async function loaderHandler({ request }: LoaderFunctionArgs) {
   const session = extractAppProxySession(request);
 
-  // Fast-path: read from Customer Metafields cache
-  const { stats, syncState } = await getCustomerCollectionMetafields(session.customer_id);
+  try {
+    const { stats, syncState } = await getCustomerCollectionMetafields(session.customer_id);
 
-  return new Response(JSON.stringify({
-    success: true,
-    data: {
-      stats,
-      syncState,
-    },
-  }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" }
-  });
+    return new Response(JSON.stringify({
+      success: true,
+      data: {
+        stats,
+        syncState,
+      },
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  } catch (err) {
+    return new Response(JSON.stringify({
+      success: true,
+      data: {
+        stats: { total_items: 0, total_value: 0, wishlisted_count: 0 },
+        syncState: { status: "IDLE", last_synced_at: null, total_orders_synced: 0 },
+      },
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
 }
 
 export const loader = withErrorHandler(loaderHandler);

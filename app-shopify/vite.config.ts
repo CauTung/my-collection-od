@@ -7,4 +7,10 @@ export default defineConfig({
   resolve: {
     tsconfigPaths: true,
   },
+  server: {
+    allowedHosts: true,
+    port: Number(process.env.PORT || 5173),
+    hmr: true
+  }
 });
+

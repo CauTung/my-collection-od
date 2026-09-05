@@ -76,6 +76,11 @@ async function checkNamespaceCollision() {
     metaobjectDefinitions: { nodes: Array<{ type: string; name: string }> };
   };
 
+  if (!data || !data.metaobjectDefinitions) {
+    console.error("GraphQL Error:", JSON.stringify(result, null, 2));
+    throw new Error("Failed to fetch metaobjectDefinitions");
+  }
+
   const existingTypes = data.metaobjectDefinitions.nodes.map((n) => n.type);
 
   if (existingTypes.includes(COLLECTION_ITEM_TYPE)) {

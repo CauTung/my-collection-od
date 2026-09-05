@@ -1,0 +1,19 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "ca958ce3663b8d53c5a97da71d01cdd6"
+name = "my collection od"
+application_url = "https://my-collection-g64655qcs-mr-gnu-t95.vercel.app"
+embedded = true
+
+[auth]
+redirect_urls = [
+  "https://my-collection-g64655qcs-mr-gnu-t95.vercel.app/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2024-01"
+
+[app_proxy]
+url = "https://my-collection-g64655qcs-mr-gnu-t95.vercel.app"
+subpath = "my-collection"
+prefix = "apps"

@@ -16,17 +16,26 @@ async function actionHandler({ request }: ActionFunctionArgs) {
 
   const session = extractAppProxySession(request);
 
-  // triggerBatchSync handles setting the status to 'queued' or 'syncing'
-  // and spawning the background process without blocking the HTTP response.
-  await triggerBatchSync(session.customer_id);
+  try {
+    await triggerBatchSync(session.customer_id);
 
-  return new Response(JSON.stringify({ 
-    success: true, 
-    message: "Sync process triggered successfully" 
-  }), { 
-    status: 202, 
-    headers: { "Content-Type": "application/json" } 
-  }); 
+    return new Response(JSON.stringify({ 
+      success: true, 
+      message: "Sync process triggered successfully" 
+    }), { 
+      status: 202, 
+      headers: { "Content-Type": "application/json" } 
+    }); 
+  } catch (err) {
+    return new Response(JSON.stringify({
+      success: false,
+      message: "Could not trigger sync. Please check Admin API token in .env.",
+      error: String(err)
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
 }
 
 export const action = withErrorHandler(actionHandler);
