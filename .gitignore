@@ -8,3 +8,6 @@
 /app-shopify/.react-router/
 /app-shopify/build/
 /app-shopify/.vitest/
+
+.vercel
+.env*

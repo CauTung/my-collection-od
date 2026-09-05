@@ -3,7 +3,7 @@
 > **BẮTBUỘC CẬP NHẬT** mỗi khi có thay đổi về cấu trúc thư mục, luồng dữ liệu, exception handling hoặc performance optimization. Xem AGENTS.md mục 5.
 
 **Phiên bản**: 0.1.0 (Phase 1 Setup)
-**Cập nhật lần cuối**: 2026-09-04
+**Cập nhật lần cuối**: 2026-09-05
 **Trạng thái**: Scaffold + Phase 1 files (constants, types, .env.example, setup script)
 
 ---
@@ -93,17 +93,20 @@ denomination, country_of_issue, material, year_of_issue, issuer, quality, grade,
 
 | Module | Trách nhiệm duy nhất |
 |---|---|
-| `hmac.server.ts` | Verify HMAC — App Proxy (query params) + Webhook (raw body) |
-| `session.server.ts` | Extract customer_id từ App Proxy request |
+| `hmac.server.ts` | Verify HMAC — App Proxy groups duplicate non-identity keys with commas, requires one copy of every identity parameter, validates a five-minute signed timestamp window, then compares the signature; Webhook verifies raw body |
+| `webhook.server.ts` | Shared webhook boundary: raw-body HMAC, signed shop binding, exact topic binding, then JSON parsing |
+| `error-handler.server.ts` | Converts App Proxy authentication failures to HTTP 401 and unexpected route failures to HTTP 500; routes do not swallow errors as HTTP 200 |
+| `session.server.ts` | Atomically verify App Proxy HMAC, bind signed `shop` to `SHOPIFY_SHOP_DOMAIN`, then extract the signed customer context through `authenticateAppProxyRequest()` |
 | `graphql-client.server.ts` | Wrapper duy nhất cho Admin GraphQL — retry/backoff/proactive throttle |
 | `shopify-domain.server.ts` | Normalize `SHOPIFY_SHOP_DOMAIN` (hostname hoặc HTTPS URL) trước khi tạo Admin API URL |
 | `dedup.server.ts` | claimOrderSync() atomic — metaobjectCreate + catch userErrors |
-| `metaobject.server.ts` | CRUD collection_item — nơi DUY NHẤT gọi GraphQL cho type này |
+| `order.server.ts` | Resolve minimal Order customer context for refund payloads through Admin GraphQL |
+| `metaobject.server.ts` | CRUD collection_item — validates mutation payloads/userErrors and serializes same-instance product upserts; nơi DUY NHẤT gọi GraphQL cho type này |
 | `metafield.server.ts` | CRUD Customer/Product Metafields |
 | `stats.server.ts` | recalculateAndCacheStats() — sau mỗi CRUD |
 | `product-filter.server.ts` | filterCoinLineItems() — coin vs accessory classifier |
 | `batch-sync.server.ts` | Historical Batch Sync engine (async model, progress polling) |
-| `idempotency.server.ts` | Cache idempotency_key cho CRUD manual |
+| `idempotency.server.ts` | Cache idempotency key theo customer + operation + resource + client UUID; failed mutation release claim để request có thể retry |
 | `queue.server.ts` | ACTIVE_BATCH_SYNC_JOBS in-memory counter |
 | `error-handler.server.ts` | AppError class + withErrorHandler() wrapper |
 | `logger.server.ts` | Structured JSON logger, auto-redact PII |
@@ -114,12 +117,27 @@ denomination, country_of_issue, material, year_of_issue, issuer, quality, grade,
 
 ### 5.1 Real-time Webhook (orders/paid)
 ```
-Shopify → HMAC verify → claimOrderSync() (atomic)
+Shopify → authenticateWebhookRequest(raw HMAC + shop + topic)
     → fetch collectible_data metafields → filterCoinLineItems(lineItems, collectibleProductIds)
+    → check cancellation claim để không recreate order bị cancel đến trước
+    → claimOrderSync() (atomic) sau khi read-only prerequisites thành công
+    → serialize theo customer/product trong cùng server instance
     → upsert collection_item theo product_id (không luôn tạo mới)
+    → validate quantity 1..999 + reject userErrors/missing mutation payload
     → recalculateAndCacheStats()
     → Yotpo +50pts (non-blocking, lần đầu tạo collection)
 ```
+
+### 5.4 Refund, Cancellation và GDPR
+
+```
+orders/cancelled → filter collectible products → cancellation claim → serialized decrement/soft-delete
+refunds/create → query Order customer bằng order_id → filter → refund claim → serialized decrement/soft-delete
+customers/redact → list cả active + soft-deleted records theo customer → hard-delete từng Metaobject
+shop/redact → ACK sau auth vì ứng dụng không có external shop database
+```
+
+GDPR hard-delete luôn đọc lại first page sau mỗi batch; không tái sử dụng cursor trong lúc result set đang bị xóa. Nếu bất kỳ deletion nào fail, route trả non-2xx để Shopify retry thay vì ACK sai.
 
 ### 5.2 Historical Batch Sync (async model)
 ```
@@ -134,11 +152,17 @@ POST /api/collection/sync → queue.canStartNewJob()
 
 ### 5.3 Manual CRUD
 ```
-FE sinh idempotency_key (UUID mới mỗi lần mở form)
+Shopify App Proxy ký từng request tới `/api/collection*`
+    → authenticateAppProxyRequest() verify signature + timestamp
+    → đối chiếu signed shop với SHOPIFY_SHOP_DOMAIN
+    → lấy customer_id đã ký; direct Vercel requests bị từ chối 401
+    → FE sinh idempotency_key (UUID mới mỗi lần mở form)
     → POST /api/collection { ..., idempotency_key }
-    → check idempotency cache
+    → check cache key = customer + operation + resource + idempotency_key
     → validate với Zod schema
     → metaobject.server.ts CRUD
+    → mutation fail: release processing claim rồi rethrow để cùng request retry được
+    → mutation success: cache exact result
     → recalculateAndCacheStats()
 ```
 
@@ -152,11 +176,21 @@ FE sinh idempotency_key (UUID mới mỗi lần mở form)
 
 **Cross-customer throttle**: `ACTIVE_BATCH_SYNC_JOBS` in-memory counter. Job vượt `MAX_CONCURRENT_BATCH_SYNC_JOBS` → status 'queued', không reject.
 
+**Product upsert concurrency**: read-modify-write được serialize theo `customer_id + product_id` trong một server instance. Vì Vercel có nhiều instance và kiến trúc không có distributed lock/DB, concurrent upserts trên hai instance vẫn là residual risk cần verify trên dev store và quyết định riêng trước production.
+
 ---
 
 ## 7. Security
 
-- Mọi App Proxy + Webhook request phải qua HMAC verify trước bất kỳ xử lý nào.
+- Mọi customer API route và dashboard App Proxy phải gọi `authenticateAppProxyRequest()` trước khi đọc hoặc ghi dữ liệu. Không route nào được tự lấy `logged_in_customer_id` từ request chưa xác thực.
+- App Proxy identity parameters (`signature`, `shop`, `path_prefix`, `logged_in_customer_id`, `timestamp`) chỉ được xuất hiện đúng một lần. Signed timestamp chỉ hợp lệ trong cửa sổ ±5 phút để giảm replay risk.
+- Direct requests tới Vercel customer APIs không có Shopify signature trả HTTP 401.
+- Signed request từ shop khác cũng trả HTTP 401 vì Admin token hiện tại chỉ thuộc một `SHOPIFY_SHOP_DOMAIN` cố định.
+- Manual idempotency cache luôn scope theo authenticated customer và operation/resource, tránh cached-response leak khi hai customer gửi cùng client UUID.
+- Không log full App Proxy URL hoặc query parameters vì chúng chứa reusable signature.
+- Mọi Webhook request phải qua HMAC verify trên raw body trước bất kỳ xử lý nào.
+- Webhook chỉ được parse sau khi signed shop trùng `SHOPIFY_SHOP_DOMAIN` và `X-Shopify-Topic` trùng route.
+- `customers/redact` hard-delete Metaobject thay vì soft-delete; soft-deleted records cũng nằm trong tập redaction.
 - Customer data isolation: filter server-side bằng customer_id trong GraphQL query. Defense-in-depth: `mapMetaobjectToItem()` giữ customer_id, tầng application verify lại.
 - Không string-interpolate user input vào GraphQL — luôn dùng `variables`.
 
@@ -168,3 +202,7 @@ FE sinh idempotency_key (UUID mới mỗi lần mở form)
 |---|---|---|
 | 2026-09-04 | Scaffold React Router v7 + Phase 1 files | Khởi tạo project |
 | 2026-09-04 | Batch sync → async model (progress polling) | Tránh timeout margin mỏng của sync model (spec mục 4.5 + 11) |
+| 2026-09-05 | Centralized App Proxy authentication for every customer route, with duplicate-identity rejection and timestamp freshness | Close direct-backend customer impersonation and signed-request replay risks |
+| 2026-09-05 | Bound App Proxy shop identity and scoped manual idempotency cache by customer/operation/resource | Close independent-review blockers for cross-shop authorization and cross-customer cached responses |
+| 2026-09-05 | Added mutation failure retry lifecycle, strict Shopify mutation-result validation, quantity boundaries, and same-instance product-upsert serialization | Prevent stuck manual requests, false-success responses, invalid quantities, and local lost updates |
+| 2026-09-05 | Centralized webhook authentication, added TOML subscriptions, refund order lookup, cancellation ordering guard, and GDPR hard-delete | Align webhook delivery identity, lifecycle, and privacy behavior with Shopify contracts |
