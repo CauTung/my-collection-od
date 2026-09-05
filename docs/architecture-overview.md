@@ -97,11 +97,12 @@ denomination, country_of_issue, material, year_of_issue, issuer, quality, grade,
 | `webhook.server.ts` | Shared webhook boundary: raw-body HMAC, signed shop binding, exact topic binding, then JSON parsing |
 | `error-handler.server.ts` | Converts App Proxy authentication failures to HTTP 401 and unexpected route failures to HTTP 500; routes do not swallow errors as HTTP 200 |
 | `session.server.ts` | Atomically verify App Proxy HMAC, bind signed `shop` to `SHOPIFY_SHOP_DOMAIN`, then extract the signed customer context through `authenticateAppProxyRequest()` |
-| `graphql-client.server.ts` | Wrapper duy nhất cho Admin GraphQL — retry/backoff/proactive throttle |
+| `graphql-client.server.ts` | Wrapper duy nhất cho Admin GraphQL `2026-07` — retry/backoff/proactive throttle; version lấy từ constants |
 | `shopify-domain.server.ts` | Normalize `SHOPIFY_SHOP_DOMAIN` (hostname hoặc HTTPS URL) trước khi tạo Admin API URL |
 | `dedup.server.ts` | claimOrderSync() atomic — metaobjectCreate + catch userErrors |
 | `order.server.ts` | Resolve minimal Order customer context for refund payloads through Admin GraphQL |
 | `metaobject.server.ts` | CRUD collection_item — validates mutation payloads/userErrors and serializes same-instance product upserts; nơi DUY NHẤT gọi GraphQL cho type này |
+| `metaobject-search.server.ts` | Tạo Metaobject field filter đúng contract `fields.{key}:"value"` và escape search value |
 | `metafield.server.ts` | CRUD Customer/Product Metafields |
 | `stats.server.ts` | recalculateAndCacheStats() — sau mỗi CRUD |
 | `product-filter.server.ts` | filterCoinLineItems() — coin vs accessory classifier |
@@ -133,11 +134,20 @@ Shopify → authenticateWebhookRequest(raw HMAC + shop + topic)
 ```
 orders/cancelled → filter collectible products → cancellation claim → serialized decrement/soft-delete
 refunds/create → query Order customer bằng order_id → filter → refund claim → serialized decrement/soft-delete
-customers/redact → list cả active + soft-deleted records theo customer → hard-delete từng Metaobject
+customers/redact → list cả active + soft-deleted collection items và dedup locks theo customer → hard-delete từng Metaobject theo chunk 5
 shop/redact → ACK sau auth vì ứng dụng không có external shop database
 ```
 
 GDPR hard-delete luôn đọc lại first page sau mỗi batch; không tái sử dụng cursor trong lúc result set đang bị xóa. Nếu bất kỳ deletion nào fail, route trả non-2xx để Shopify retry thay vì ACK sai.
+
+Giới hạn hiện tại cần quyết định trước go-live:
+
+- Paid/cancel/refund claim event trước khi ghi từng item. Nếu một item fail sau khi các item khác đã thành công, route hiện ACK 200 và giữ claim; chưa có durable item-level retry để phục hồi chính xác một lần.
+- Cancellation đến trước paid đã có guard cho luồng tuần tự. Refund đến trước paid vẫn có thể decrement khi item chưa tồn tại rồi paid tạo lại full quantity.
+- `customers/data_request` mới xác thực, log metadata không PII và ACK. Quy trình xuất/giao dữ liệu cho store owner và durable operator notification chưa được thiết kế.
+- Cancel và refund của cùng order hiện là hai event claim độc lập. Nếu Shopify phát cả hai cho cùng quantity, mô hình chưa có per-order contribution để ngăn double-decrement chính xác trong mọi thứ tự delivery.
+- Privacy deletion đã bounded concurrency và mỗi delete thành công được lưu bền trên Shopify, nhưng customer có rất nhiều record vẫn có thể vượt request timeout; cần benchmark staging để quyết định có cần durable continuation hay không.
+- Sau redaction chưa có privacy-safe durable tombstone; commerce webhook hợp lệ đến muộn/replay vẫn có thể tạo lại claim/item. Không được giữ raw customer ID chỉ để làm tombstone nếu chưa có quyết định privacy/legal.
 
 ### 5.2 Historical Batch Sync (async model)
 ```
@@ -178,6 +188,8 @@ Shopify App Proxy ký từng request tới `/api/collection*`
 
 **Product upsert concurrency**: read-modify-write được serialize theo `customer_id + product_id` trong một server instance. Vì Vercel có nhiều instance và kiến trúc không có distributed lock/DB, concurrent upserts trên hai instance vẫn là residual risk cần verify trên dev store và quyết định riêng trước production.
 
+**Webhook mutation concurrency**: paid, cancellation, refund và privacy deletion chạy qua `mapSettledInChunks()` với `WEBHOOK_MUTATION_CONCURRENCY = 5`; lỗi từng item được cô lập nhưng không tạo burst tối đa 250 mutation đồng thời.
+
 ---
 
 ## 7. Security
@@ -190,8 +202,9 @@ Shopify App Proxy ký từng request tới `/api/collection*`
 - Không log full App Proxy URL hoặc query parameters vì chúng chứa reusable signature.
 - Mọi Webhook request phải qua HMAC verify trên raw body trước bất kỳ xử lý nào.
 - Webhook chỉ được parse sau khi signed shop trùng `SHOPIFY_SHOP_DOMAIN` và `X-Shopify-Topic` trùng route.
-- `customers/redact` hard-delete Metaobject thay vì soft-delete; soft-deleted records cũng nằm trong tập redaction.
+- `customers/redact` hard-delete Metaobject thay vì soft-delete; soft-deleted collection items và `collection_dedup_lock` chứa customer/order ID đều nằm trong tập redaction.
 - Customer data isolation: filter server-side bằng customer_id trong GraphQL query. Defense-in-depth: `mapMetaobjectToItem()` giữ customer_id, tầng application verify lại.
+- Mọi field dùng trong Metaobject search (`customer_id`, `product_id`, `is_deleted`, `in_wishlist`) phải bật `adminFilterable`; setup script migrate definition cũ và chạy real query probe.
 - Không string-interpolate user input vào GraphQL — luôn dùng `variables`.
 
 ---
@@ -206,3 +219,5 @@ Shopify App Proxy ký từng request tới `/api/collection*`
 | 2026-09-05 | Bound App Proxy shop identity and scoped manual idempotency cache by customer/operation/resource | Close independent-review blockers for cross-shop authorization and cross-customer cached responses |
 | 2026-09-05 | Added mutation failure retry lifecycle, strict Shopify mutation-result validation, quantity boundaries, and same-instance product-upsert serialization | Prevent stuck manual requests, false-success responses, invalid quantities, and local lost updates |
 | 2026-09-05 | Centralized webhook authentication, added TOML subscriptions, refund order lookup, cancellation ordering guard, and GDPR hard-delete | Align webhook delivery identity, lifecycle, and privacy behavior with Shopify contracts |
+| 2026-09-05 | Bounded webhook mutation concurrency, privacy deletion for dedup locks, Admin API `2026-07`, and `read_all_orders` scope | Close independent-review blockers for privacy completeness, request bursts, and old-order refund lookup |
+| 2026-09-05 | Corrected Metaobject field-search syntax and migrated searched fields to `adminFilterable` | Prevent mocked tests from hiding broken customer/product filters and incomplete privacy erasure on Shopify |

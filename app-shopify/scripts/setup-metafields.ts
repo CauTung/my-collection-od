@@ -20,6 +20,12 @@
 
 import "dotenv/config";
 import { normalizeShopifyShopDomain } from "../app/lib/shopify-domain.server";
+import { buildMetaobjectFieldFilter } from "../app/lib/metaobject-search.server";
+import {
+  COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE,
+  COLLECTION_ITEM_METAOBJECT_TYPE,
+  SHOPIFY_ADMIN_API_VERSION,
+} from "../app/config/constants";
 
 const SHOP_DOMAIN_VALUE = process.env.SHOPIFY_SHOP_DOMAIN;
 const ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
@@ -32,14 +38,14 @@ if (!SHOP_DOMAIN_VALUE || !ACCESS_TOKEN) {
 }
 
 const SHOP_DOMAIN = normalizeShopifyShopDomain(SHOP_DOMAIN_VALUE);
-const ADMIN_API_URL = `https://${SHOP_DOMAIN}/admin/api/2024-10/graphql.json`;
+const ADMIN_API_URL = `https://${SHOP_DOMAIN}/admin/api/${SHOPIFY_ADMIN_API_VERSION}/graphql.json`;
 
 // ─── Namespace Configuration ──────────────────────────────────────────────────
 // Change to "downies_collection" / "downies_product_data" if there is a conflict
 const CUSTOMER_METAFIELD_NAMESPACE = "my_collection";
 const PRODUCT_METAFIELD_NAMESPACE = "collectible_data";
-const COLLECTION_ITEM_TYPE = "collection_item";
-const DEDUP_LOCK_TYPE = "collection_dedup_lock";
+const COLLECTION_ITEM_TYPE = COLLECTION_ITEM_METAOBJECT_TYPE;
+const DEDUP_LOCK_TYPE = COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE;
 
 async function shopifyGraphQL(query: string, variables?: Record<string, unknown>) {
   const res = await fetch(ADMIN_API_URL, {
@@ -130,8 +136,8 @@ async function createCollectionItemDefinition() {
       name: "Collection Item",
       fieldDefinitions: [
         { key: "item_id", name: "Item ID", type: "single_line_text_field", required: true },
-        { key: "product_id", name: "Product ID", type: "single_line_text_field", required: true },
-        { key: "customer_id", name: "Customer ID", type: "single_line_text_field", required: true },
+        { key: "product_id", name: "Product ID", type: "single_line_text_field", required: true, capabilities: { adminFilterable: { enabled: true } } },
+        { key: "customer_id", name: "Customer ID", type: "single_line_text_field", required: true, capabilities: { adminFilterable: { enabled: true } } },
         { key: "sku_code", name: "SKU Code", type: "single_line_text_field" },
         { key: "source", name: "Source", type: "single_line_text_field", required: true },
         { key: "external_order_id", name: "External Order ID", type: "single_line_text_field" },
@@ -143,8 +149,8 @@ async function createCollectionItemDefinition() {
         { key: "certificate_number", name: "Certificate Number", type: "single_line_text_field" },
         { key: "user_grade", name: "User Grade", type: "single_line_text_field" },
         { key: "user_notes", name: "User Notes", type: "multi_line_text_field" },
-        { key: "in_wishlist", name: "In Wishlist", type: "boolean" },
-        { key: "is_deleted", name: "Is Deleted", type: "boolean" },
+        { key: "in_wishlist", name: "In Wishlist", type: "boolean", capabilities: { adminFilterable: { enabled: true } } },
+        { key: "is_deleted", name: "Is Deleted", type: "boolean", capabilities: { adminFilterable: { enabled: true } } },
       ],
     },
   });
@@ -195,7 +201,7 @@ async function createDedupLockDefinition() {
       type: DEDUP_LOCK_TYPE,
       name: "Collection Dedup Lock",
       fieldDefinitions: [
-        { key: "customer_id", name: "Customer ID", type: "single_line_text_field", required: true },
+        { key: "customer_id", name: "Customer ID", type: "single_line_text_field", required: true, capabilities: { adminFilterable: { enabled: true } } },
         { key: "external_order_id", name: "External Order ID", type: "single_line_text_field", required: true },
       ],
     },
@@ -355,6 +361,114 @@ async function createProductMetafieldDefinitions() {
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
+async function ensureFilterableMetaobjectFields(
+  metaobjectType: string,
+  requiredFieldKeys: readonly string[]
+) {
+  const lookupResult = await shopifyGraphQL(`
+    query GetFilterableMetaobjectDefinition($type: String!) {
+      metaobjectDefinitionByType(type: $type) {
+        id
+        fieldDefinitions {
+          key
+          capabilities {
+            adminFilterable { enabled eligible }
+          }
+        }
+      }
+    }
+  `, { type: metaobjectType });
+
+  const lookupData = lookupResult.data as {
+    metaobjectDefinitionByType?: {
+      id: string;
+      fieldDefinitions: Array<{
+        key: string;
+        capabilities: { adminFilterable: { enabled: boolean; eligible: boolean } };
+      }>;
+    } | null;
+  };
+  const definition = lookupData.metaobjectDefinitionByType;
+  if (!definition) {
+    throw new Error(`Metaobject definition "${metaobjectType}" was not found after setup`);
+  }
+
+  const fieldsToEnable = requiredFieldKeys.filter((key) => {
+    const field = definition.fieldDefinitions.find((candidate) => candidate.key === key);
+    if (!field) {
+      throw new Error(`Required field "${metaobjectType}.${key}" does not exist`);
+    }
+    if (!field.capabilities.adminFilterable.eligible) {
+      throw new Error(`Field "${metaobjectType}.${key}" is not eligible for filtering`);
+    }
+    return !field.capabilities.adminFilterable.enabled;
+  });
+
+  if (fieldsToEnable.length === 0) {
+    console.log(`Metaobject filter capabilities already enabled for ${metaobjectType}.`);
+    return;
+  }
+
+  const updateResult = await shopifyGraphQL(`
+    mutation EnableMetaobjectFieldFilters(
+      $id: ID!
+      $definition: MetaobjectDefinitionUpdateInput!
+    ) {
+      metaobjectDefinitionUpdate(id: $id, definition: $definition) {
+        metaobjectDefinition { id }
+        userErrors { field message code }
+      }
+    }
+  `, {
+    id: definition.id,
+    definition: {
+      fieldDefinitions: fieldsToEnable.map((key) => ({
+        update: {
+          key,
+          capabilities: { adminFilterable: { enabled: true } },
+        },
+      })),
+    },
+  });
+
+  const updateData = updateResult.data as {
+    metaobjectDefinitionUpdate?: {
+      metaobjectDefinition?: { id: string } | null;
+      userErrors: Array<{ field: string[]; message: string; code: string }>;
+    };
+  };
+  const mutation = updateData.metaobjectDefinitionUpdate;
+  if (!mutation?.metaobjectDefinition || mutation.userErrors.length > 0) {
+    throw new Error(
+      `Failed to enable filters for ${metaobjectType}: ${JSON.stringify(mutation?.userErrors ?? [])}`
+    );
+  }
+
+  console.log(`Enabled filter capabilities for ${metaobjectType}: ${fieldsToEnable.join(", ")}`);
+}
+
+async function verifyMetaobjectFieldSearch(metaobjectType: string) {
+  const result = await shopifyGraphQL(`
+    query VerifyMetaobjectFieldSearch($type: String!, $query: String!) {
+      metaobjects(type: $type, first: 1, query: $query) {
+        nodes { id }
+      }
+    }
+  `, {
+    type: metaobjectType,
+    query: buildMetaobjectFieldFilter("customer_id", "filter-contract-probe"),
+  });
+
+  const data = result.data as { metaobjects?: { nodes: Array<{ id: string }> } };
+  if (result.errors?.length || !data.metaobjects) {
+    throw new Error(
+      `Field search verification failed for ${metaobjectType}: ${JSON.stringify(result.errors ?? [])}`
+    );
+  }
+
+  console.log(`Verified field-search contract for ${metaobjectType}.`);
+}
+
 async function main() {
   console.log("🚀 Downies My Collection — Shopify Setup Script");
   console.log(`📍 Shop: ${SHOP_DOMAIN}`);
@@ -364,6 +478,15 @@ async function main() {
     await checkNamespaceCollision();
     await createCollectionItemDefinition();
     await createDedupLockDefinition();
+    await ensureFilterableMetaobjectFields(COLLECTION_ITEM_TYPE, [
+      "customer_id",
+      "product_id",
+      "is_deleted",
+      "in_wishlist",
+    ]);
+    await ensureFilterableMetaobjectFields(DEDUP_LOCK_TYPE, ["customer_id"]);
+    await verifyMetaobjectFieldSearch(COLLECTION_ITEM_TYPE);
+    await verifyMetaobjectFieldSearch(DEDUP_LOCK_TYPE);
     await createCustomerMetafieldDefinitions();
     await createProductMetafieldDefinitions();
 

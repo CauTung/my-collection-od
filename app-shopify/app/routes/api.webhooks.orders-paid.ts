@@ -20,6 +20,8 @@ import { upsertCollectionItemByProduct } from "~/lib/metaobject.server";
 import { filterCoinLineItems, buildCollectibleProductIds } from "~/lib/product-filter.server";
 import { recalculateAndCacheStats } from "~/lib/stats.server";
 import { logger } from "~/lib/logger.server";
+import { mapSettledInChunks } from "~/lib/concurrency.server";
+import { WEBHOOK_MUTATION_CONCURRENCY } from "~/config/constants";
 import type { ShopifyOrderPaidPayload } from "~/types";
 
 async function actionHandler({ request }: ActionFunctionArgs) {
@@ -93,8 +95,10 @@ async function actionHandler({ request }: ActionFunctionArgs) {
   const purchaseDate = payload.created_at?.split("T")[0] || new Date().toISOString().split("T")[0];
 
   // 5. Upsert concurrently with isolation
-  const results = await Promise.allSettled(
-    Array.from(aggregated.entries()).map(([productId, data]) =>
+  const results = await mapSettledInChunks(
+    Array.from(aggregated.entries()),
+    WEBHOOK_MUTATION_CONCURRENCY,
+    ([productId, data]) =>
       upsertCollectionItemByProduct(customerId, productId, {
         quantity_owned: data.quantity,
         purchase_date: purchaseDate,
@@ -102,7 +106,6 @@ async function actionHandler({ request }: ActionFunctionArgs) {
         source: "shopify_sync",
         external_order_id: orderId,
       })
-    )
   );
 
   let hasErrors = false;

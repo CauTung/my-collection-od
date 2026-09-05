@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createCollectionItem,
   decrementCollectionItemByProduct,
-  hardDeleteCollectionMetaobject,
+  hardDeleteMetaobjectForPrivacy,
   listCollectionMetaobjectsForPrivacyDeletion,
   updateCollectionItem,
   upsertCollectionItemByProduct,
@@ -325,7 +325,7 @@ describe("collection item mutations", () => {
     const [query, variables] = mockGraphQL.mock.calls[0];
     expect(query).not.toContain("is_deleted");
     expect(variables).toEqual({
-      query: `customer_id:'${CUSTOMER_ID}'`,
+      query: `fields.customer_id:"${CUSTOMER_ID}"`,
       first: 250,
     });
   });
@@ -342,7 +342,7 @@ describe("collection item mutations", () => {
     });
 
     await expect(
-      hardDeleteCollectionMetaobject(CUSTOMER_ID, metaobjectId)
+      hardDeleteMetaobjectForPrivacy(CUSTOMER_ID, metaobjectId)
     ).resolves.toBeUndefined();
     expect(mockGraphQL).toHaveBeenCalledTimes(1);
   });
@@ -358,7 +358,7 @@ describe("collection item mutations", () => {
     });
 
     await expect(
-      hardDeleteCollectionMetaobject(CUSTOMER_ID, "gid://shopify/Metaobject/active")
+      hardDeleteMetaobjectForPrivacy(CUSTOMER_ID, "gid://shopify/Metaobject/active")
     ).rejects.toMatchObject({ code: ErrorCode.GRAPHQL_ERROR });
   });
 

@@ -19,6 +19,7 @@
 import {
   GRAPHQL_RETRY_BASE_DELAY_MS,
   GRAPHQL_MAX_RETRY_ATTEMPTS,
+  SHOPIFY_ADMIN_API_VERSION,
 } from "~/config/constants";
 import type { ShopifyGraphQLResponse } from "~/types";
 import { logger } from "./logger.server";
@@ -29,7 +30,6 @@ import { ErrorCode } from "~/types";
 const SHOP_DOMAIN_VALUE = process.env.SHOPIFY_SHOP_DOMAIN;
 // Admin access token — ONLY used here, NEVER for HMAC verification
 const ADMIN_ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
-const API_VERSION = "2024-10";
 
 /** Sleep for a given number of milliseconds. */
 function sleep(ms: number): Promise<void> {
@@ -79,7 +79,7 @@ export async function shopifyGraphQL<T = unknown>(
   }
 
   const shopDomain = normalizeShopifyShopDomain(SHOP_DOMAIN_VALUE);
-  const url = `https://${shopDomain}/admin/api/${API_VERSION}/graphql.json`;
+  const url = `https://${shopDomain}/admin/api/${SHOPIFY_ADMIN_API_VERSION}/graphql.json`;
   const isMutation = query.trim().startsWith("mutation");
 
   let response: globalThis.Response;

@@ -20,6 +20,8 @@ import { decrementCollectionItemByProduct } from "~/lib/metaobject.server";
 import { filterCoinLineItems, buildCollectibleProductIds } from "~/lib/product-filter.server";
 import { recalculateAndCacheStats } from "~/lib/stats.server";
 import { logger } from "~/lib/logger.server";
+import { mapSettledInChunks } from "~/lib/concurrency.server";
+import { WEBHOOK_MUTATION_CONCURRENCY } from "~/config/constants";
 import type { ShopifyOrderCancelledPayload } from "~/types";
 
 async function actionHandler({ request }: ActionFunctionArgs) {
@@ -70,11 +72,11 @@ async function actionHandler({ request }: ActionFunctionArgs) {
 
   let hasErrors = false;
 
-  // Process decrements sequentially or via Promise.allSettled
-  const results = await Promise.allSettled(
-    Array.from(aggregated.entries()).map(([productId, cancelQty]) =>
+  const results = await mapSettledInChunks(
+    Array.from(aggregated.entries()),
+    WEBHOOK_MUTATION_CONCURRENCY,
+    ([productId, cancelQty]) =>
       decrementCollectionItemByProduct(customerId, productId, cancelQty)
-    )
   );
 
   for (const result of results) {

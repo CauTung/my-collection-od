@@ -42,4 +42,12 @@ describe("getOrderCustomerId", () => {
       code: ErrorCode.GRAPHQL_ERROR,
     });
   });
+
+  it("rejects an inaccessible order instead of treating it as a guest order", async () => {
+    mockGraphQL.mockResolvedValueOnce({ data: { order: null } });
+
+    await expect(getOrderCustomerId(ORDER_ID)).rejects.toMatchObject({
+      code: ErrorCode.GRAPHQL_ERROR,
+    });
+  });
 });

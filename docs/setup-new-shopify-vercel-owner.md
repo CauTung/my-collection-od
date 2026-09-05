@@ -96,6 +96,7 @@ Partner app hiện cần tối thiểu:
 
 - `write_app_proxy`: cấu hình App Proxy.
 - `read_orders`: bắt buộc cho các order/refund webhook đã khai báo trong TOML.
+- `read_all_orders`: bắt buộc để refund lookup không bị giới hạn ở order 60 ngày gần nhất; quyền này phải được approve/cấp cho cả Partner app và Legacy custom app token.
 
 Legacy custom app cần các Admin API scopes ở mục 5.2. Các scope đó cấp cho token GraphQL, không phải tự động lấy từ `[access_scopes]` của Partner app.
 
@@ -105,7 +106,7 @@ Config Partner app tối thiểu để tái tạo App Proxy hiện tại:
 
 ```toml
 [access_scopes]
-scopes = "write_app_proxy,read_orders"
+scopes = "write_app_proxy,read_orders,read_all_orders"
 ```
 
 Partner app phải hoàn tất yêu cầu protected customer data liên quan trước khi production. Legacy custom app vẫn cần scope đọc order riêng cho Admin GraphQL và historical sync.
@@ -184,6 +185,7 @@ Không copy API key/API secret của Legacy custom app vào `SHOPIFY_APP_SECRET`
 Token hiện cần các nhóm quyền sau:
 
 - `read_orders`: đọc orders cho batch sync.
+- `read_all_orders`: đọc order cũ hơn 60 ngày khi xử lý refund hoặc historical sync; nếu thêm scope sau khi app/token đã tạo thì phải cập nhật quyền và tạo/cấp lại token phù hợp.
 - `read_all_orders`: cần cho lookback 10 năm; đây là quyền hạn chế và có thể cần Shopify phê duyệt.
 - `write_customers`: đọc customer và ghi cached stats/sync metafields.
 - `write_products`: đọc Product metafields và tạo Product metafield definitions trong setup script.
@@ -337,7 +339,7 @@ application_url = "https://<PRODUCTION_DOMAIN>"
 embedded = true
 
 [access_scopes]
-scopes = "write_app_proxy,read_orders"
+scopes = "write_app_proxy,read_orders,read_all_orders"
 
 [auth]
 redirect_urls = [
@@ -419,6 +421,8 @@ Script `scripts/setup-metafields.ts` tạo:
 - `collection_dedup_lock` metaobject definition;
 - `my_collection.*` Customer metafield definitions;
 - `collectible_data.*` Product metafield definitions.
+
+Script cũng bật/migrate `adminFilterable` cho các field runtime dùng để search (`customer_id`, `product_id`, `is_deleted`, `in_wishlist`) và chạy query probe thật cho cả hai Metaobject types. Nếu bước probe fail thì không được tiếp tục deploy.
 
 Chạy một lần có giám sát từ `app-shopify`:
 
@@ -581,8 +585,8 @@ Các mục dưới đây được ghi nhận từ trạng thái source hiện t�
 1. `shopify.app.toml` đang chứa Client ID và domain của deployment hiện tại; cần chiến lược config template + named environment configs.
 2. Runtime phụ thuộc token tĩnh của một Legacy custom app riêng; chưa có token lifecycle cho Partner/custom-distribution app mới.
 3. `/api/auth/callback` được cấu hình nhưng route không tồn tại.
-4. GraphQL Admin API runtime/setup version vẫn hardcode và chưa đồng nhất với webhook API version.
-5. `scripts/setup-metafields.ts` gọi `fetch()` trực tiếp thay vì `shopifyGraphQL()` và hardcode API version/namespaces/types.
+4. GraphQL Admin API runtime/setup đã dùng chung constant `2026-07`; vẫn cần quy trình nâng version định kỳ.
+5. `scripts/setup-metafields.ts` vẫn gọi `fetch()` trực tiếp thay vì `shopifyGraphQL()` và còn namespace literals riêng.
 6. `npm run build` luôn chạy script tạo schema có side effect lên Shopify store.
 7. Quyền vẫn bị chia giữa Partner app và Legacy custom app; cần machine-readable environment/scope validation.
 8. App-specific webhook subscriptions đã có trong TOML nhưng chưa deploy/release và chưa verify delivery thật.

@@ -17,6 +17,7 @@ import { logger } from "./logger.server";
 import { awardLoyaltyPoints } from "./integrations/yotpo.server";
 import { syncCustomerToKlaviyo } from "./integrations/klaviyo.server";
 import { COLLECTION_ITEM_METAOBJECT_TYPE } from "~/config/constants";
+import { buildMetaobjectFieldFilter } from "./metaobject-search.server";
 
 interface StatsResponse {
   metaobjects?: {
@@ -41,7 +42,10 @@ export async function recalculateAndCacheStats(customerId: string): Promise<Cust
     stats: { total_items: 0, total_value: 0 } 
   }));
 
-  const queryStr = `customer_id:'${customerId}' AND is_deleted:'false'`;
+  const queryStr = [
+    buildMetaobjectFieldFilter("customer_id", customerId),
+    buildMetaobjectFieldFilter("is_deleted", "false"),
+  ].join(" AND ");
 
   try {
     while (hasNextPage) {

@@ -18,6 +18,7 @@ import { shopifyGraphQL } from "./graphql-client.server";
 import { AppError } from "./error-handler.server";
 import { ErrorCode, type CollectionItem, type CollectionFilters, type CollectionPage } from "~/types";
 import { logger } from "./logger.server";
+import { buildMetaobjectFieldFilter } from "./metaobject-search.server";
 import {
   COLLECTION_ITEM_METAOBJECT_TYPE,
   COLLECTION_PAGE_SIZE,
@@ -91,7 +92,11 @@ function formatFields(item: Partial<CollectionItem>) {
  * Internal helper to find an existing item by product_id.
  */
 async function findExistingItemByProduct(customerId: string, productId: string) {
-  const queryStr = `customer_id:'${customerId}' AND product_id:'${productId}' AND is_deleted:'false'`;
+  const queryStr = [
+    buildMetaobjectFieldFilter("customer_id", customerId),
+    buildMetaobjectFieldFilter("product_id", productId),
+    buildMetaobjectFieldFilter("is_deleted", "false"),
+  ].join(" AND ");
   const searchResult = await shopifyGraphQL<{
     metaobjects?: {
       nodes?: Array<{ id: string; fields?: Array<{ key: string; value: string }> }>;
@@ -418,10 +423,16 @@ export async function listCollectionItems(
   filters: CollectionFilters
 ): Promise<CollectionPage> {
   // Build search query for Metaobjects
-  const queryParts = [`customer_id:'${customerId}'`, `is_deleted:'false'`];
+  const queryParts = [
+    buildMetaobjectFieldFilter("customer_id", customerId),
+    buildMetaobjectFieldFilter("is_deleted", "false"),
+  ];
 
   if (filters.in_wishlist !== undefined) {
-    queryParts.push(`in_wishlist:'${filters.in_wishlist ? "true" : "false"}'`);
+    queryParts.push(buildMetaobjectFieldFilter(
+      "in_wishlist",
+      filters.in_wishlist ? "true" : "false"
+    ));
   }
   
   const queryStr = queryParts.join(" AND ");
@@ -581,7 +592,7 @@ export async function listCollectionMetaobjectsForPrivacyDeletion(
       }
     }`,
     {
-      query: `customer_id:'${customerId}'`,
+      query: buildMetaobjectFieldFilter("customer_id", customerId),
       first: METAOBJECT_MAX_PAGE_SIZE,
     }
   );
@@ -598,7 +609,7 @@ export async function listCollectionMetaobjectsForPrivacyDeletion(
 }
 
 /** Permanently delete a previously customer-filtered metaobject for GDPR redaction. */
-export async function hardDeleteCollectionMetaobject(
+export async function hardDeleteMetaobjectForPrivacy(
   customerId: string,
   metaobjectId: string
 ): Promise<void> {
@@ -608,7 +619,7 @@ export async function hardDeleteCollectionMetaobject(
       userErrors?: Array<{ field: string[] | null; message: string }>;
     };
   }>(
-    `mutation DeleteCollectionItemForPrivacy($id: ID!) {
+    `mutation DeleteCustomerMetaobjectForPrivacy($id: ID!) {
       metaobjectDelete(id: $id) {
         deletedId
         userErrors { field message }
@@ -624,11 +635,11 @@ export async function hardDeleteCollectionMetaobject(
       metaobjectId,
       errors: mutation.userErrors,
     });
-    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Failed to permanently delete customer item");
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Failed to permanently delete customer data");
   }
 
   if (mutation?.deletedId !== metaobjectId) {
-    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not confirm customer item deletion");
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not confirm customer data deletion");
   }
 }
 

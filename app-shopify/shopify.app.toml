@@ -6,7 +6,7 @@ application_url = "https://my-collection-od.vercel.app"
 embedded = true
 
 [access_scopes]
-scopes = "write_app_proxy,read_orders"
+scopes = "write_app_proxy,read_orders,read_all_orders"
 
 [auth]
 redirect_urls = [

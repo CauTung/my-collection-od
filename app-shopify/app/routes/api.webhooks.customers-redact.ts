@@ -8,11 +8,14 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticateWebhookRequest } from "~/lib/webhook.server";
 import {
-  hardDeleteCollectionMetaobject,
+  hardDeleteMetaobjectForPrivacy,
   listCollectionMetaobjectsForPrivacyDeletion,
 } from "~/lib/metaobject.server";
 import { withErrorHandler } from "~/lib/error-handler.server";
 import { logger } from "~/lib/logger.server";
+import { listDedupLocksForPrivacyDeletion } from "~/lib/dedup.server";
+import { mapSettledInChunks } from "~/lib/concurrency.server";
+import { WEBHOOK_MUTATION_CONCURRENCY } from "~/config/constants";
 
 interface CustomerRedactPayload {
   customer?: { id?: number | string };
@@ -40,8 +43,26 @@ async function actionHandler({ request }: ActionFunctionArgs) {
     if (items.length === 0) {
       break;
     }
-    const deletions = await Promise.allSettled(
-      items.map((item) => hardDeleteCollectionMetaobject(customerId, item.id))
+    const deletions = await mapSettledInChunks(
+      items,
+      WEBHOOK_MUTATION_CONCURRENCY,
+      (item) => hardDeleteMetaobjectForPrivacy(customerId, item.id)
+    );
+    const failures = deletions.filter((result) => result.status === "rejected");
+    if (failures.length > 0) {
+      throw failures[0].reason;
+    }
+  }
+
+  while (true) {
+    const dedupLockIds = await listDedupLocksForPrivacyDeletion(customerId);
+    if (dedupLockIds.length === 0) {
+      break;
+    }
+    const deletions = await mapSettledInChunks(
+      dedupLockIds,
+      WEBHOOK_MUTATION_CONCURRENCY,
+      (metaobjectId) => hardDeleteMetaobjectForPrivacy(customerId, metaobjectId)
     );
     const failures = deletions.filter((result) => result.status === "rejected");
     if (failures.length > 0) {

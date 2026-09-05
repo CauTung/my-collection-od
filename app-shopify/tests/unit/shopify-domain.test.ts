@@ -18,7 +18,7 @@ describe("normalizeShopifyShopDomain", () => {
   it("rejects a value containing an Admin API path", () => {
     expect(() =>
       normalizeShopifyShopDomain(
-        "https://my-collection-od.myshopify.com/admin/api/2024-10/graphql.json"
+        "https://my-collection-od.myshopify.com/admin/api/2026-07/graphql.json"
       )
     ).toThrow("do not include an API path or query string");
   });

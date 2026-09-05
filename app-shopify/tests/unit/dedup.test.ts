@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { claimOrderSync, isOrderSyncClaimed } from "~/lib/dedup.server";
+import {
+  claimOrderSync,
+  isOrderSyncClaimed,
+  listDedupLocksForPrivacyDeletion,
+} from "~/lib/dedup.server";
 
 // Mock the GraphQL client — dedup.server.ts uses shopifyGraphQL internally
 vi.mock("~/lib/graphql-client.server", () => ({
@@ -183,5 +187,34 @@ describe("claimOrderSync", () => {
     await expect(isOrderSyncClaimed(CUSTOMER_GID, ORDER_GID)).rejects.toThrow(
       "Shopify did not return the dedup lookup payload"
     );
+  });
+
+  it("lists only the requested customer's dedup locks for privacy deletion", async () => {
+    mockGraphQL.mockResolvedValueOnce({
+      data: {
+        metaobjects: {
+          nodes: [
+            {
+              id: "gid://shopify/Metaobject/customer-lock",
+              fields: [{ key: "customer_id", value: CUSTOMER_GID }],
+            },
+            {
+              id: "gid://shopify/Metaobject/other-lock",
+              fields: [{ key: "customer_id", value: "gid://shopify/Customer/999" }],
+            },
+          ],
+        },
+      },
+    });
+
+    await expect(listDedupLocksForPrivacyDeletion(CUSTOMER_GID)).resolves.toEqual([
+      "gid://shopify/Metaobject/customer-lock",
+    ]);
+    const [query, variables] = mockGraphQL.mock.calls[0];
+    expect(query).toContain("query ListDedupLocksForPrivacyDeletion");
+    expect(variables).toEqual({
+      query: `fields.customer_id:"${CUSTOMER_GID}"`,
+      first: 250,
+    });
   });
 });

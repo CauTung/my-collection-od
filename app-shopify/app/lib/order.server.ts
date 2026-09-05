@@ -27,9 +27,9 @@ export async function getOrderCustomerId(orderId: string): Promise<string | null
     { id: orderId }
   );
 
-  if (!result.data || !("order" in result.data)) {
+  if (!result.data || !("order" in result.data) || !result.data.order) {
     throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not return the webhook order payload");
   }
 
-  return result.data.order?.customer?.id ?? null;
+  return result.data.order.customer?.id ?? null;
 }

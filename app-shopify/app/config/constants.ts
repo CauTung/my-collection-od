@@ -57,6 +57,9 @@ export const APP_PROXY_MAX_TIMESTAMP_SKEW_SECONDS = 5 * 60;
 
 // ─── Shopify Admin GraphQL — Leaky Bucket ─────────────────────────────────────
 /** Total leaky bucket capacity (cost points). */
+/** Supported Admin GraphQL API version used by every server request. */
+export const SHOPIFY_ADMIN_API_VERSION = "2026-07";
+
 export const GRAPHQL_BUCKET_CAPACITY = 5000;
 
 /** Bucket recovery rate (cost points / second). */
@@ -78,6 +81,9 @@ export const GRAPHQL_MAX_RETRY_ATTEMPTS = 5;
  * not "items within one order".
  */
 export const BATCH_SYNC_CONCURRENCY = 5;
+
+/** Maximum concurrent Shopify mutations within one webhook delivery. */
+export const WEBHOOK_MUTATION_CONCURRENCY = 5;
 
 /**
  * Maximum global concurrent Batch Sync jobs running system-wide (cross-customer).

@@ -22,6 +22,8 @@ import { recalculateAndCacheStats } from "~/lib/stats.server";
 import { logger } from "~/lib/logger.server";
 import { getOrderCustomerId } from "~/lib/order.server";
 import type { ShopifyRefundPayload } from "~/types";
+import { mapSettledInChunks } from "~/lib/concurrency.server";
+import { WEBHOOK_MUTATION_CONCURRENCY } from "~/config/constants";
 
 async function actionHandler({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") {
@@ -97,10 +99,11 @@ async function actionHandler({ request }: ActionFunctionArgs) {
 
   let hasErrors = false;
 
-  const results = await Promise.allSettled(
-    Array.from(aggregated.entries()).map(([productId, refundQty]) =>
+  const results = await mapSettledInChunks(
+    Array.from(aggregated.entries()),
+    WEBHOOK_MUTATION_CONCURRENCY,
+    ([productId, refundQty]) =>
       decrementCollectionItemByProduct(customerId, productId, refundQty)
-    )
   );
 
   for (const result of results) {

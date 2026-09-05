@@ -19,7 +19,11 @@ import { shopifyGraphQL, isDuplicateHandleError } from "./graphql-client.server"
 import { logger } from "./logger.server";
 import { AppError } from "./error-handler.server";
 import { ErrorCode } from "~/types";
-import { COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE } from "~/config/constants";
+import { buildMetaobjectFieldFilter } from "./metaobject-search.server";
+import {
+  COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE,
+  METAOBJECT_MAX_PAGE_SIZE,
+} from "~/config/constants";
 
 /**
  * Extract the numeric part from a Shopify GID.
@@ -144,4 +148,43 @@ export async function isOrderSyncClaimed(customerId: string, orderId: string): P
   }
 
   return Boolean(result.data.metaobjectByHandle);
+}
+
+/**
+ * List one page of customer-owned event claims for permanent privacy deletion.
+ * The application-side customer check provides defense in depth for Shopify search results.
+ */
+export async function listDedupLocksForPrivacyDeletion(customerId: string): Promise<string[]> {
+  const result = await shopifyGraphQL<{
+    metaobjects?: {
+      nodes?: Array<{
+        id: string;
+        fields?: Array<{ key: string; value: string }>;
+      }>;
+    };
+  }>(
+    `query ListDedupLocksForPrivacyDeletion($query: String!, $first: Int!) {
+      metaobjects(type: "${COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE}", first: $first, query: $query) {
+        nodes {
+          id
+          fields { key value }
+        }
+      }
+    }`,
+    {
+      query: buildMetaobjectFieldFilter("customer_id", customerId),
+      first: METAOBJECT_MAX_PAGE_SIZE,
+    }
+  );
+
+  const metaobjects = result.data?.metaobjects;
+  if (!metaobjects) {
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not return privacy deletion claims");
+  }
+
+  return (metaobjects.nodes ?? [])
+    .filter((node) => node.fields?.some(
+      (field) => field.key === "customer_id" && field.value === customerId
+    ))
+    .map((node) => node.id);
 }

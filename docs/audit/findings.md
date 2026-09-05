@@ -160,3 +160,181 @@
 - Remediation: Validate initial and resulting quantities in the server module using the shared constant.
 - Acceptance: Quantity 0 fails before GraphQL; incrementing 999 by 1 fails after exactly one lookup and no update.
 - Independent review: Round 2 confirmed boundary tests exercise the intended paths
+
+## AUD-012 — Webhook Identity Was Not Bound Centrally
+
+- Severity: P0
+- Status: Fixed locally; real Shopify delivery verification pending
+- Location: `app/lib/webhook.server.ts`, all `app/routes/api.webhooks.*.ts`
+- Evidence: Webhook routes previously implemented authentication and payload parsing independently, without one boundary that also checked the sending shop and exact topic.
+- Impact: Authentication behavior could drift between routes, and a valid delivery for another route or shop could reach the wrong handler.
+- Remediation: Added `authenticateWebhookRequest()` to verify the raw-body HMAC, bind `X-Shopify-Shop-Domain` to the configured shop, bind `X-Shopify-Topic` to the route, and only then parse JSON.
+- Acceptance: All six unsigned route requests return exact HTTP 401 and `HMAC_INVALID`; unit tests also cover body tampering, wrong shop, wrong topic, malformed JSON, and array roots.
+- Independent review: Final reconciliation found no remaining authentication-boundary blocker
+
+## AUD-013 — App-Specific Webhook Subscriptions Were Missing
+
+- Severity: P0
+- Status: Fixed in source; Shopify deploy/release pending
+- Location: `app-shopify/shopify.app.toml`
+- Evidence: The app configuration did not declare the paid, cancellation, refund, and mandatory compliance webhook subscriptions used by the implemented routes.
+- Impact: Route code could be correct while Shopify never delivered the production events.
+- Remediation: Declared all six subscriptions, set webhook API version `2026-07`, and added the `read_orders` plus `read_all_orders` scopes required by refund order lookup across the supported history.
+- Acceptance: Release the configuration through Shopify CLI, then prove each topic reaches its intended Vercel route using real signed deliveries.
+- Independent review: TOML structure reconciled; production release remains AUD-020
+
+## AUD-014 — Refund Webhook Could Silently Skip Customer Orders
+
+- Severity: P1
+- Status: Fixed locally; real refund payload verification pending
+- Location: `app/lib/order.server.ts`, `app/routes/api.webhooks.refunds-create.ts`
+- Evidence: The refund payload handler depended on customer information that is not a reliable top-level refund field and acknowledged the event when it was absent.
+- Impact: A normal refund could leave collection quantity unchanged.
+- Remediation: Resolve the order customer through the Admin GraphQL API using `order_id`; only guest/deleted-customer orders are skipped.
+- Acceptance: Unit tests prove customer and guest-order outcomes; a real dev-store refund must prove the payload and scope behavior.
+- Independent review: Local order-resolution path reconciled; real refund remains a staging gate
+
+## AUD-015 — Customer Redaction Was Soft and Incomplete
+
+- Severity: P0
+- Status: Fixed locally and independently reconciled; real compliance delivery verification pending
+- Location: `app/lib/metaobject.server.ts`, `app/routes/api.webhooks.customers-redact.ts`
+- Evidence: The old path only handled active records and used application soft deletion.
+- Impact: Personal collection records, including previously soft-deleted entries, could remain after a privacy erasure request.
+- Remediation: List active and soft-deleted records by customer, apply an application-side customer check, hard-delete each Metaobject, re-read the first page as the result set shrinks, and return non-2xx on any failed deletion so Shopify retries.
+- Acceptance: Unit tests cover inclusion of soft-deleted records, exact delete IDs, and failure propagation; verify against a real dev store before release.
+- Independent review: Final reconciliation confirmed item and dedup-lock deletion paths
+
+## AUD-016 — Cancellation Could Arrive Before Paid Processing
+
+- Severity: P1
+- Status: Fixed for the sequential delivery case; concurrent cross-instance ordering remains under AUD-009
+- Location: `app/lib/dedup.server.ts`, `app/routes/api.webhooks.orders-paid.ts`
+- Evidence: A cancellation handled before its paid delivery could be followed by a paid upsert that recreated the cancelled item.
+- Impact: Customer collection quantity could include a cancelled purchase.
+- Remediation: Paid processing performs an O(1) lookup for the cancellation claim before creating its own claim and upserting items.
+- Acceptance: Route test proves a pre-existing cancellation claim prevents both the paid claim and product upsert.
+- Independent review: Sequential guard reconciled; broader ordering risks remain AUD-018/AUD-024
+
+## AUD-017 — Partial Webhook Failure Is Permanently Acknowledged
+
+- Severity: P1
+- Status: Open — architecture decision required
+- Location: paid, cancellation, and refund webhook routes
+- Evidence: The event claim is created before item mutations. `Promise.allSettled()` isolates failures, but the route logs rejected items and still returns HTTP 200 while retaining the event claim.
+- Impact: A transient failure can permanently omit one item or decrement while Shopify is told the event succeeded. Returning non-2xx without changing the dedup model would also be unsafe because successful siblings could run twice.
+- Recommendation: Persist item-level event contributions/status, or introduce a durable replayable job model. This requires a design decision within the zero-external-DB constraint.
+- Acceptance: A test with one successful and one failed line item must prove the failed item is eventually applied exactly once without reapplying the successful item.
+- Owner: architecture decision gate
+
+## AUD-018 — Refund-Before-Paid Ordering Can Lose the Decrement
+
+- Severity: P1
+- Status: Open — architecture decision required
+- Location: `app/routes/api.webhooks.refunds-create.ts`, `app/routes/api.webhooks.orders-paid.ts`
+- Evidence: If a refund arrives before the corresponding paid item exists, decrement finds nothing and the refund claim is retained; a later paid delivery can then add the full quantity.
+- Impact: Refunded products can remain in the customer collection.
+- Recommendation: Model immutable per-event contributions or persist pending decrements that paid processing consumes. A process-local lock does not solve delivery across Vercel instances or restarts.
+- Acceptance: An integration test delivers refund first and paid second and ends at the exact net quantity.
+- Owner: architecture decision gate
+
+## AUD-019 — Customer Data Requests Lack an Operational Fulfilment Path
+
+- Severity: P1
+- Status: Open
+- Location: `app/routes/api.webhooks.customers-data-request.ts`, owner operating procedure
+- Evidence: The route authenticates, logs request metadata, and acknowledges receipt, but does not export the customer's collection data or create a durable operator task.
+- Impact: Receiving the mandatory webhook does not by itself fulfil the store owner's privacy response obligation.
+- Recommendation: Define the approved export-and-delivery procedure and a durable notification/task mechanism without logging personal data.
+- Acceptance: A real data request produces a traceable operator workflow and an exact customer-scoped data export within the required response window.
+- Owner: product/operations decision gate
+
+## AUD-020 — Webhook Configuration Is Not Released Yet
+
+- Severity: P0 for launch readiness
+- Status: Open until external deployment is completed and verified
+- Location: Shopify app version and dev store
+- Evidence: `shopify.app.toml` contains the subscriptions locally, but this implementation task did not deploy or release the configuration.
+- Impact: The live app may continue using the previous scopes and subscription set.
+- Recommendation: Deploy/release the app configuration, approve the changed scope if Shopify requires it, and exercise all six topics on the real dev store.
+- Acceptance: Shopify Partner/Dev Dashboard shows the released version and successful signed deliveries to the stable Vercel production domain.
+- Owner: deployment operator
+
+## AUD-021 — Privacy Erasure Omitted Dedup Locks
+
+- Severity: P0
+- Status: Fixed locally and independently reconciled; real compliance delivery verification pending
+- Location: `app/lib/dedup.server.ts`, `app/routes/api.webhooks.customers-redact.ts`
+- Evidence: Dedup Metaobjects persist `customer_id` and `external_order_id`, but the first Batch C implementation deleted only collection items.
+- Remediation: Customer redaction now lists customer-scoped `collection_dedup_lock` records with an application-side ownership check and permanently deletes them using the same retry-safe first-page loop.
+- Acceptance: Unit and route tests prove other-customer locks are excluded and both item and lock pages are re-read until empty.
+
+## AUD-022 — Webhooks Launched Unbounded Mutation Bursts
+
+- Severity: P1
+- Status: Fixed locally and independently reconciled; real webhook runtime verification pending
+- Location: `app/lib/concurrency.server.ts`, paid/cancellation/refund/customer-redact routes
+- Evidence: Routes used one `Promise.allSettled()` across all products or up to 250 privacy deletions.
+- Remediation: Added bounded settled mapping and `WEBHOOK_MUTATION_CONCURRENCY = 5` in shared constants.
+- Acceptance: Exact test reaches concurrency 5, never more, preserves all results, and continues after a rejected operation.
+
+## AUD-023 — Admin GraphQL Used an Expired Hardcoded API Version
+
+- Severity: P1
+- Status: Fixed locally and independently reconciled; real dev-store operation verification pending
+- Location: `app/config/constants.ts`, `app/lib/graphql-client.server.ts`
+- Evidence: Admin calls used hardcoded `2024-10` while webhook configuration targeted `2026-07`.
+- Remediation: Admin API version is now the shared `SHOPIFY_ADMIN_API_VERSION = "2026-07"` constant.
+- Acceptance: URL construction test asserts the exact supported version; all affected operations still require real-store execution.
+
+## AUD-024 — Cancellation and Refund Can Double-Decrement One Order
+
+- Severity: P1
+- Status: Open — architecture decision required
+- Location: cancellation and refund webhook routes
+- Evidence: Cancellation subtracts cancelled line quantities under an order cancellation claim while each refund independently subtracts refund quantities under another claim.
+- Impact: When both events represent the same units, quantity can be removed twice, including units owned from another order of the same product.
+- Recommendation: Persist per-order/per-event quantity contributions and reconcile the exact net effect rather than suppressing one topic heuristically.
+- Acceptance: Lifecycle tests cover cancel→refund, refund→cancel, partial refund→cancel, and duplicate deliveries with exact final quantities.
+- Owner: architecture decision gate
+
+## AUD-025 — Refund Lookup Could Treat Inaccessible Old Orders as Guests
+
+- Severity: P1
+- Status: Fixed in source; access approval/token update and real-store verification pending
+- Location: `app/lib/order.server.ts`, `app-shopify/shopify.app.toml`
+- Evidence: `read_orders` can be insufficient for orders older than 60 days, and `order: null` was previously acknowledged as if no customer existed.
+- Remediation: Added `read_all_orders`; a null/inaccessible order now throws so the webhook returns non-2xx instead of being silently discarded. Only an existing order with `customer: null` is treated as guest/deleted-customer.
+- Acceptance: Update the actual app/token scopes and verify a refund lookup against an order older than 60 days.
+
+## AUD-026 — Large Privacy Erasures Depend on Webhook Retry Time Budget
+
+- Severity: P1
+- Status: Open — staging measurement and architecture decision required
+- Location: `app/routes/api.webhooks.customers-redact.ts`
+- Evidence: Mutation concurrency is bounded to five and each successful hard deletion is durable, but a customer with many records can require many sequential chunks before one request completes.
+- Impact: The Vercel request can time out. Shopify retries can continue from the remaining first page, but retry count and delivery lifetime place an upper bound on this recovery strategy.
+- Recommendation: Measure worst-case deletion duration on staging. If it exceeds the delivery budget, use a durable continuation/job mechanism approved for the zero-external-DB architecture.
+- Acceptance: A maximum-size staging customer is fully erased within the documented delivery/retry budget, or a durable continuation test proves eventual deletion after request termination.
+- Owner: architecture/staging decision gate
+
+## AUD-027 — Metaobject Field Searches Used an Invalid Real-Shop Contract
+
+- Severity: P0
+- Status: Fixed in code, migrated on the configured dev store, and independently reconciled
+- Location: `app/lib/metaobject-search.server.ts`, Metaobject query callers, `scripts/setup-metafields.ts`
+- Evidence: Queries used `customer_id:'value'` instead of Shopify's `fields.customer_id:"value"` syntax, and searched definition fields did not enable `adminFilterable`. Mocks asserted the invalid query and hid the production failure.
+- Impact: Product upsert, collection list, stats, customer isolation, and GDPR deletion could return errors or incorrect result sets on Shopify.
+- Remediation: Centralized escaped field-filter construction, updated all Metaobject query callers, enabled filter capabilities on new definitions, and added an idempotent migration plus real query probe for existing definitions.
+- Acceptance: Unit tests assert exact syntax and escaping. The configured dev store accepted capability migration for `customer_id`, `product_id`, `is_deleted`, and `in_wishlist`; final build must show both real field-search probes pass.
+
+## AUD-028 — Late Commerce Webhook Can Recreate Redacted Customer Data
+
+- Severity: P2 under Shopify's normal delayed-redaction lifecycle; escalate to P1 if signed webhook bodies can be retained or replayed
+- Status: Open — privacy architecture decision required
+- Location: customer-redact and paid/refund/cancellation webhook lifecycle
+- Evidence: Customer redaction removes items and dedup locks, but there is no durable non-personal marker that prevents a late or replayed valid commerce event from creating a new lock and collection item afterward.
+- Impact: Previously erased customer collection data can be recreated after the privacy handler returns success.
+- Recommendation: Confirm Shopify delivery-order guarantees and design a privacy-safe suppression mechanism. Retaining the raw customer ID as a tombstone would itself conflict with erasure, so this cannot be solved by copying the deleted identifier into another record.
+- Acceptance: Staging lifecycle test delivers a commerce event after redaction and proves no customer-associated data is recreated, using a mechanism approved by privacy/legal owners.
+- Owner: privacy/architecture decision gate
