@@ -19,17 +19,19 @@
  */
 
 import "dotenv/config";
+import { normalizeShopifyShopDomain } from "../app/lib/shopify-domain.server";
 
-const SHOP_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN;
+const SHOP_DOMAIN_VALUE = process.env.SHOPIFY_SHOP_DOMAIN;
 const ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 
-if (!SHOP_DOMAIN || !ACCESS_TOKEN) {
+if (!SHOP_DOMAIN_VALUE || !ACCESS_TOKEN) {
   console.error(
     "❌ Missing SHOPIFY_SHOP_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN in .env"
   );
   process.exit(1);
 }
 
+const SHOP_DOMAIN = normalizeShopifyShopDomain(SHOP_DOMAIN_VALUE);
 const ADMIN_API_URL = `https://${SHOP_DOMAIN}/admin/api/2024-10/graphql.json`;
 
 // ─── Namespace Configuration ──────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import { type LoaderFunctionArgs } from "react-router";
 import { extractAppProxySession } from "~/lib/session.server";
 import { getCustomerCollectionMetafields } from "~/lib/metafield.server";
 import { withErrorHandler } from "~/lib/error-handler.server";
+import { logger } from "~/lib/logger.server";
 
 async function loaderHandler({ request }: LoaderFunctionArgs) {
   const session = extractAppProxySession(request);
@@ -25,7 +26,11 @@ async function loaderHandler({ request }: LoaderFunctionArgs) {
       status: 200,
       headers: { "Content-Type": "application/json" }
     });
-  } catch (err) {
+  } catch (error) {
+    logger.warn("Unable to fetch cached collection stats; returning initial values", {
+      error: String(error),
+      customerId: session.customer_id,
+    });
     return new Response(JSON.stringify({
       success: true,
       data: {

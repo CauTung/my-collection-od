@@ -20,16 +20,14 @@ import { logger } from "~/lib/logger.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
-    const url = new URL(request.url);
     const params = getQueryParams(request);
+    verifyAppProxyHmac(params);
 
     const customerId = params["logged_in_customer_id"] || "";
     const shop = params["shop"] || "";
     const pathPrefix = params["path_prefix"] || "";
 
-    const apiBase = `https://${shop}${pathPrefix}/api/collection`;
-
-    const html = buildDashboardHtml(customerId, shop, pathPrefix, apiBase);
+    const html = buildDashboardHtml(customerId, shop, pathPrefix);
 
     return new Response(html, {
       status: 200,
@@ -49,8 +47,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 function buildDashboardHtml(
   customerId: string,
   shop: string,
-  pathPrefix: string,
-  apiBase: string
+  pathPrefix: string
 ): string {
   return `
 <style>

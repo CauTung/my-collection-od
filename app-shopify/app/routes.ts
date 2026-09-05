@@ -16,5 +16,4 @@ export default [
   route("api/webhooks/customers-data-request", "routes/api.webhooks.customers-data-request.ts"),
   route("api/webhooks/customers-redact", "routes/api.webhooks.customers-redact.ts"),
   route("api/webhooks/shop-redact", "routes/api.webhooks.shop-redact.ts"),
-  route("api/auth/callback", "routes/api.auth.callback.ts"),
 ] satisfies RouteConfig;

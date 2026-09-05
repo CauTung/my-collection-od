@@ -96,6 +96,7 @@ denomination, country_of_issue, material, year_of_issue, issuer, quality, grade,
 | `hmac.server.ts` | Verify HMAC — App Proxy (query params) + Webhook (raw body) |
 | `session.server.ts` | Extract customer_id từ App Proxy request |
 | `graphql-client.server.ts` | Wrapper duy nhất cho Admin GraphQL — retry/backoff/proactive throttle |
+| `shopify-domain.server.ts` | Normalize `SHOPIFY_SHOP_DOMAIN` (hostname hoặc HTTPS URL) trước khi tạo Admin API URL |
 | `dedup.server.ts` | claimOrderSync() atomic — metaobjectCreate + catch userErrors |
 | `metaobject.server.ts` | CRUD collection_item — nơi DUY NHẤT gọi GraphQL cho type này |
 | `metafield.server.ts` | CRUD Customer/Product Metafields |

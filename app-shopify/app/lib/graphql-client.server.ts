@@ -23,9 +23,10 @@ import {
 import type { ShopifyGraphQLResponse } from "~/types";
 import { logger } from "./logger.server";
 import { AppError } from "./error-handler.server";
+import { normalizeShopifyShopDomain } from "./shopify-domain.server";
 import { ErrorCode } from "~/types";
 
-const SHOP_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN;
+const SHOP_DOMAIN_VALUE = process.env.SHOPIFY_SHOP_DOMAIN;
 // Admin access token — ONLY used here, NEVER for HMAC verification
 const ADMIN_ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 const API_VERSION = "2024-10";
@@ -70,14 +71,15 @@ export async function shopifyGraphQL<T = unknown>(
   attempt = 0,
   reqId = Math.random().toString(36).substring(2, 9)
 ): Promise<ShopifyGraphQLResponse<T>> {
-  if (!SHOP_DOMAIN || !ADMIN_ACCESS_TOKEN) {
+  if (!SHOP_DOMAIN_VALUE || !ADMIN_ACCESS_TOKEN) {
     throw new Error(
       "Missing SHOPIFY_SHOP_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN environment variables. " +
         "Check .env.example — these are DIFFERENT from SHOPIFY_APP_SECRET."
     );
   }
 
-  const url = `https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
+  const shopDomain = normalizeShopifyShopDomain(SHOP_DOMAIN_VALUE);
+  const url = `https://${shopDomain}/admin/api/${API_VERSION}/graphql.json`;
   const isMutation = query.trim().startsWith("mutation");
 
   let response: globalThis.Response;

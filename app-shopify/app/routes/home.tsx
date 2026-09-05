@@ -41,6 +41,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       );
     }
 
+    verifyAppProxyHmac(params);
+
     const customerId = params["logged_in_customer_id"] || "";
     const shop = params["shop"] || "";
     const pathPrefix = params["path_prefix"] || "/apps/my-collection";
