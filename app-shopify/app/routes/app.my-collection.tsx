@@ -21,7 +21,7 @@ import { logger } from "~/lib/logger.server";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const params = getQueryParams(request);
-    verifyAppProxyHmac(params);
+    verifyAppProxyHmac(new URL(request.url).searchParams);
 
     const customerId = params["logged_in_customer_id"] || "";
     const shop = params["shop"] || "";

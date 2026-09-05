@@ -42,20 +42,29 @@ function getAppSecret(): string {
  * @param queryParams - The parsed query parameters from the incoming request URL.
  * @throws AppError(HMAC_INVALID) if verification fails.
  */
-export function verifyAppProxyHmac(queryParams: Record<string, string>): void {
+export function verifyAppProxyHmac(queryParams: URLSearchParams): void {
   const secret = getAppSecret();
-  const incomingSignature = queryParams["signature"];
+  const incomingSignature = queryParams.get("signature");
 
   if (!incomingSignature) {
     throw new AppError(ErrorCode.HMAC_INVALID, "Missing signature parameter in App Proxy request");
   }
 
-  // Build the message: sort all params except "signature", join as key=value
-  const message = Object.keys(queryParams)
-    .filter((key) => key !== "signature")
+  // Shopify groups duplicate keys, joins their values with commas, then joins the
+  // sorted key/value entries with no delimiter. `&` is only the URL separator.
+  const parameterValues = new Map<string, string[]>();
+  for (const [key, value] of queryParams.entries()) {
+    if (key !== "signature") {
+      const values = parameterValues.get(key) ?? [];
+      values.push(value);
+      parameterValues.set(key, values);
+    }
+  }
+
+  const message = [...parameterValues.entries()]
+    .map(([key, values]) => `${key}=${values.join(",")}`)
     .sort()
-    .map((key) => `${key}=${queryParams[key]}`)
-    .join("&");
+    .join("");
 
   const computed = createHmac("sha256", secret).update(message).digest("hex");
 

@@ -20,7 +20,7 @@ beforeEach(() => {
 // ─── App Proxy HMAC ───────────────────────────────────────────────────────────
 
 describe("verifyAppProxyHmac", () => {
-  function buildValidParams(overrides: Record<string, string> = {}): Record<string, string> {
+  function buildValidParams(overrides: Record<string, string> = {}): URLSearchParams {
     const params: Record<string, string> = {
       shop: "test-shop.myshopify.com",
       path_prefix: "/apps/my-collection",
@@ -29,15 +29,15 @@ describe("verifyAppProxyHmac", () => {
       ...overrides,
     };
 
-    // Compute correct HMAC: sort all non-signature keys, join as key=value
+    // Shopify concatenates sorted key=value entries without ampersand separators.
     const message = Object.keys(params)
       .filter((k) => k !== "signature")
       .sort()
       .map((k) => `${k}=${params[k]}`)
-      .join("&");
+      .join("");
 
     params["signature"] = createHmac("sha256", TEST_SECRET).update(message).digest("hex");
-    return params;
+    return new URLSearchParams(params);
   }
 
   it("passes verification when HMAC is correct", () => {
@@ -47,7 +47,7 @@ describe("verifyAppProxyHmac", () => {
 
   it("throws HMAC_INVALID when signature is missing", () => {
     const params = buildValidParams();
-    delete params["signature"];
+    params.delete("signature");
 
     expect(() => verifyAppProxyHmac(params)).toThrow(
       expect.objectContaining({ code: ErrorCode.HMAC_INVALID })
@@ -56,7 +56,7 @@ describe("verifyAppProxyHmac", () => {
 
   it("throws HMAC_INVALID when signature is tampered", () => {
     const params = buildValidParams();
-    params["signature"] = "a".repeat(64); // wrong hex
+    params.set("signature", "a".repeat(64)); // wrong hex
 
     expect(() => verifyAppProxyHmac(params)).toThrow(
       expect.objectContaining({ code: ErrorCode.HMAC_INVALID })
@@ -65,7 +65,7 @@ describe("verifyAppProxyHmac", () => {
 
   it("throws HMAC_INVALID when a query param value is modified after signing", () => {
     const params = buildValidParams();
-    params["logged_in_customer_id"] = "99999"; // tampered param
+    params.set("logged_in_customer_id", "99999"); // tampered param
 
     expect(() => verifyAppProxyHmac(params)).toThrow(
       expect.objectContaining({ code: ErrorCode.HMAC_INVALID })
@@ -75,26 +75,34 @@ describe("verifyAppProxyHmac", () => {
   it("is not sensitive to param ordering — sorts params before comparing", () => {
     // Build params in reverse alphabetical order to verify sorting is applied
     const base = buildValidParams();
-    const reordered: Record<string, string> = {};
-    for (const key of Object.keys(base).reverse()) {
-      reordered[key] = base[key]!;
-    }
+    const reordered = new URLSearchParams([...base.entries()].reverse());
     expect(() => verifyAppProxyHmac(reordered)).not.toThrow();
   });
 
   it("throws HMAC_INVALID when signed with a wrong secret", () => {
-    const params: Record<string, string> = {
+    const params = new URLSearchParams({
       shop: "test.myshopify.com",
       timestamp: "1700000000",
-    };
-    const message = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join("&");
+    });
+    const message = [...params.entries()].sort().map(([key, value]) => `${key}=${value}`).join("");
     // Sign with a DIFFERENT secret than what's in the env
-    params["signature"] = createHmac("sha256", "wrong_secret").update(message).digest("hex");
+    params.set("signature", createHmac("sha256", "wrong_secret").update(message).digest("hex"));
 
     expect(() => verifyAppProxyHmac(params)).toThrow(
       expect.objectContaining({ code: ErrorCode.HMAC_INVALID })
     );
   });
+
+  it("uses Shopify's duplicate-value normalization and separator-free message", () => {
+    const params = new URLSearchParams(
+      "extra=1&extra=2&shop=test.myshopify.com&logged_in_customer_id=1&path_prefix=%2Fapps%2Fmy-collection&timestamp=1700000000"
+    );
+    const message = "extra=1,2logged_in_customer_id=1path_prefix=/apps/my-collectionshop=test.myshopify.comtimestamp=1700000000";
+    params.set("signature", createHmac("sha256", TEST_SECRET).update(message).digest("hex"));
+
+    expect(() => verifyAppProxyHmac(params)).not.toThrow();
+  });
+
 });
 
 // ─── Webhook HMAC ─────────────────────────────────────────────────────────────

@@ -41,7 +41,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       );
     }
 
-    verifyAppProxyHmac(params);
+    verifyAppProxyHmac(url.searchParams);
 
     const customerId = params["logged_in_customer_id"] || "";
     const shop = params["shop"] || "";
