@@ -6,7 +6,7 @@
  */
 
 import { type ActionFunctionArgs } from "react-router";
-import { extractAppProxySession } from "~/lib/session.server";
+import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { updateCollectionItem, deleteCollectionItem } from "~/lib/metaobject.server";
 import { recalculateAndCacheStats } from "~/lib/stats.server";
 import { checkAndClaimIdempotencyKey, setIdempotentResult } from "~/lib/idempotency.server";
@@ -16,7 +16,7 @@ import { UpdateItemSchema } from "~/lib/validation/schemas";
 import { logger } from "~/lib/logger.server";
 
 async function actionHandler({ request, params }: ActionFunctionArgs) {
-  const session = extractAppProxySession(request);
+  const session = authenticateAppProxyRequest(request);
   const itemId = params.item_id;
 
   if (!itemId) {
@@ -35,13 +35,18 @@ async function actionHandler({ request, params }: ActionFunctionArgs) {
 
     const data = validationResult.data;
     const idempotencyKey = data.idempotency_key;
+    const idempotencyScope = {
+      customerId: session.customer_id,
+      operation: "update" as const,
+      resourceId: itemId,
+    };
 
     if (!idempotencyKey) {
       throw new AppError(ErrorCode.VALIDATION_ERROR, "Missing idempotency_key");
     }
 
     // Idempotency Check (Defense against double-submit)
-    const claimStatus = checkAndClaimIdempotencyKey(idempotencyKey);
+    const claimStatus = checkAndClaimIdempotencyKey(idempotencyScope, idempotencyKey);
     if (claimStatus.status === "processing") {
       return new Response("Conflict: Request already processing", { status: 409 });
     } else if (claimStatus.status === "finished") {
@@ -62,7 +67,7 @@ async function actionHandler({ request, params }: ActionFunctionArgs) {
     }
 
     const responseBody = { success: true, message: "Item updated successfully" };
-    setIdempotentResult(idempotencyKey, responseBody);
+    setIdempotentResult(idempotencyScope, idempotencyKey, responseBody);
 
     return new Response(JSON.stringify(responseBody), { status: 200, headers: { "Content-Type": "application/json" } });
   }

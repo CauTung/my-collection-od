@@ -2,7 +2,7 @@
 
 client_id = "ca958ce3663b8d53c5a97da71d01cdd6"
 name = "my collection od"
-application_url = "https://my-collection-g64655qcs-mr-gnu-t95.vercel.app"
+application_url = "https://my-collection-od.vercel.app"
 embedded = true
 
 [access_scopes]
@@ -10,13 +10,13 @@ scopes = "write_app_proxy"
 
 [auth]
 redirect_urls = [
-  "https://my-collection-g64655qcs-mr-gnu-t95.vercel.app/api/auth/callback"
+  "https://my-collection-od.vercel.app/api/auth/callback"
 ]
 
 [webhooks]
 api_version = "2024-01"
 
 [app_proxy]
-url = "https://my-collection-bgt3jjlbd-mr-gnu-t95.vercel.app"
+url = "https://my-collection-od.vercel.app"
 subpath = "my-collection"
 prefix = "apps"

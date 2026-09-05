@@ -5,13 +5,13 @@
  */
 
 import { type LoaderFunctionArgs } from "react-router";
-import { extractAppProxySession } from "~/lib/session.server";
+import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { getCustomerCollectionMetafields } from "~/lib/metafield.server";
 import { withErrorHandler } from "~/lib/error-handler.server";
 import { logger } from "~/lib/logger.server";
 
 async function loaderHandler({ request }: LoaderFunctionArgs) {
-  const session = extractAppProxySession(request);
+  const session = authenticateAppProxyRequest(request);
 
   try {
     const { stats, syncState } = await getCustomerCollectionMetafields(session.customer_id);

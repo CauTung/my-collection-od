@@ -6,7 +6,7 @@
  */
 
 import { type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
-import { extractAppProxySession } from "~/lib/session.server";
+import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { listCollectionItems, createCollectionItem } from "~/lib/metaobject.server";
 import { recalculateAndCacheStats } from "~/lib/stats.server";
 import { checkAndClaimIdempotencyKey, setIdempotentResult } from "~/lib/idempotency.server";
@@ -16,7 +16,7 @@ import { AddItemSchema as CollectionItemSchema } from "~/lib/validation/schemas"
 import { logger } from "~/lib/logger.server";
 
 async function loaderHandler({ request }: LoaderFunctionArgs) {
-  const session = extractAppProxySession(request);
+  const session = authenticateAppProxyRequest(request);
   const url = new URL(request.url);
 
   const filters: CollectionFilters = {
@@ -56,7 +56,7 @@ async function actionHandler({ request }: ActionFunctionArgs) {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  const session = extractAppProxySession(request);
+  const session = authenticateAppProxyRequest(request);
   const body = await request.json();
 
   // Validate request body
@@ -69,13 +69,17 @@ async function actionHandler({ request }: ActionFunctionArgs) {
 
   const data = validationResult.data;
   const idempotencyKey = data.idempotency_key;
+  const idempotencyScope = {
+    customerId: session.customer_id,
+    operation: "create" as const,
+  };
 
   if (!idempotencyKey) {
     throw new AppError(ErrorCode.VALIDATION_ERROR, "Missing idempotency_key");
   }
 
   // Idempotency Check (Defense against double-submit)
-  const claimStatus = checkAndClaimIdempotencyKey(idempotencyKey);
+  const claimStatus = checkAndClaimIdempotencyKey(idempotencyScope, idempotencyKey);
   if (claimStatus.status === "processing") {
     return new Response("Conflict: Request already processing", { status: 409 });
   } else if (claimStatus.status === "finished") {
@@ -97,7 +101,7 @@ async function actionHandler({ request }: ActionFunctionArgs) {
   }
 
   const responseBody = { success: true, data: newItem };
-  setIdempotentResult(idempotencyKey, responseBody);
+  setIdempotentResult(idempotencyScope, idempotencyKey, responseBody);
 
   return new Response(JSON.stringify(responseBody), { status: 201, headers: { "Content-Type": "application/json" } });
 }

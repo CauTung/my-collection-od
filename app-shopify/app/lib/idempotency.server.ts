@@ -8,6 +8,8 @@
  *   accidental double-click. This is separate from the webhook dedup in dedup.server.ts
  *   which handles server-to-server race conditions.
  * - Uses an in-memory Map with TTL timestamps (not Redis) — acceptable trade-off since double-submits happen within seconds, well within the TTL window.
+ * - Cache identity includes customer, operation, resource, and client key. A client key
+ *   can therefore never return another customer's cached response.
  * - In serverless environments with multiple instances, the same idempotency_key could
  *   be processed once per instance. The client-side disable-on-submit (FE layer) is the
  *   primary guard; this cache is the secondary server-side guard per instance.
@@ -22,9 +24,15 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-// In-memory store: idempotency_key → cached result
+// In-memory store: customer + operation + resource + idempotency_key → cached result
 // Generic over the result type so the cache works for any CRUD operation
 const cache = new Map<string, CacheEntry<unknown>>();
+
+export interface IdempotencyScope {
+  customerId: string;
+  operation: "create" | "update";
+  resourceId?: string;
+}
 
 /** Periodically purge expired entries to prevent unbounded memory growth. */
 function purgeExpired(): void {
@@ -47,15 +55,20 @@ type IdempotencyStatus<T> =
 /**
  * Atomically check and claim an idempotency key.
  *
+ * @param scope - Authenticated customer and mutation resource scope.
  * @param key - The idempotency_key UUID from the request body.
  * @returns An object indicating the status of the claim.
  */
-export function checkAndClaimIdempotencyKey<T>(key: string): IdempotencyStatus<T> {
-  const entry = cache.get(key) as CacheEntry<T> | undefined;
+export function checkAndClaimIdempotencyKey<T>(
+  scope: IdempotencyScope,
+  key: string
+): IdempotencyStatus<T> {
+  const cacheKey = buildScopedCacheKey(scope, key);
+  const entry = cache.get(cacheKey) as CacheEntry<T> | undefined;
 
   if (!entry || Date.now() > entry.expiresAt) {
     // New or expired, claim it by setting to processing immediately
-    cache.set(key, { result: "processing", expiresAt: Date.now() + IDEMPOTENCY_KEY_TTL_MS });
+    cache.set(cacheKey, { result: "processing", expiresAt: Date.now() + IDEMPOTENCY_KEY_TTL_MS });
     return { status: "claimed" };
   }
 
@@ -72,15 +85,26 @@ export function checkAndClaimIdempotencyKey<T>(key: string): IdempotencyStatus<T
  * Store the result of a successfully processed request.
  * Subsequent calls with the same key will receive this result.
  *
+ * @param scope - Authenticated customer and mutation resource scope.
  * @param key - The idempotency_key UUID from the request body.
  * @param result - The result to cache and return for duplicate requests.
  */
-export function setIdempotentResult<T>(key: string, result: T): void {
-  cache.set(key, {
+export function setIdempotentResult<T>(scope: IdempotencyScope, key: string, result: T): void {
+  const cacheKey = buildScopedCacheKey(scope, key);
+  cache.set(cacheKey, {
     result,
     expiresAt: Date.now() + IDEMPOTENCY_KEY_TTL_MS,
   });
   logger.debug("Idempotency result cached", { key, ttlMs: IDEMPOTENCY_KEY_TTL_MS });
+}
+
+function buildScopedCacheKey(scope: IdempotencyScope, key: string): string {
+  return JSON.stringify([
+    scope.customerId,
+    scope.operation,
+    scope.resourceId ?? "",
+    key,
+  ]);
 }
 
 /**

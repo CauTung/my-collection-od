@@ -8,7 +8,7 @@
  */
 
 import { type ActionFunctionArgs } from "react-router";
-import { extractAppProxySession } from "~/lib/session.server";
+import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { wishlistAdapter } from "~/lib/integrations/wishlist-adapter";
 import { getCollectionItem } from "~/lib/metaobject.server";
 import { withErrorHandler, AppError } from "~/lib/error-handler.server";
@@ -16,7 +16,7 @@ import { ErrorCode } from "~/types";
 import { logger } from "~/lib/logger.server";
 
 async function actionHandler({ request, params }: ActionFunctionArgs) {
-  const session = extractAppProxySession(request);
+  const session = authenticateAppProxyRequest(request);
   const itemId = params.item_id;
 
   if (!itemId) {

@@ -43,6 +43,12 @@ export const LOYALTY_SIGNUP_BONUS_POINTS = 50;
 /** Request limit per minute per IP for the App Proxy endpoint. */
 export const APP_PROXY_RATE_LIMIT_PER_MINUTE = 60;
 
+/**
+ * Maximum accepted clock difference for signed App Proxy requests.
+ * Limiting signed URL lifetime reduces replay risk while allowing normal clock skew.
+ */
+export const APP_PROXY_MAX_TIMESTAMP_SKEW_SECONDS = 5 * 60;
+
 // ─── Shopify Admin GraphQL — Leaky Bucket ─────────────────────────────────────
 /** Total leaky bucket capacity (cost points). */
 export const GRAPHQL_BUCKET_CAPACITY = 5000;

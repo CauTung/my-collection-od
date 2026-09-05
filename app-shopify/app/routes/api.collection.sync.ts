@@ -5,7 +5,7 @@
  */
 
 import { type ActionFunctionArgs } from "react-router";
-import { extractAppProxySession } from "~/lib/session.server";
+import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { triggerBatchSync } from "~/lib/batch-sync.server";
 import { withErrorHandler } from "~/lib/error-handler.server";
 
@@ -14,7 +14,7 @@ async function actionHandler({ request }: ActionFunctionArgs) {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  const session = extractAppProxySession(request);
+  const session = authenticateAppProxyRequest(request);
 
   try {
     await triggerBatchSync(session.customer_id);

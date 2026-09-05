@@ -5,16 +5,23 @@
  * This module must always have complete test coverage for security reasons.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "crypto";
 import { verifyAppProxyHmac, verifyWebhookHmac } from "~/lib/hmac.server";
 import { ErrorCode } from "~/types";
 
 const TEST_SECRET = "test_app_secret_abc123";
+const TEST_TIMESTAMP_SECONDS = 1_700_000_000;
 
 // Inject test secret before each test
 beforeEach(() => {
   process.env.SHOPIFY_APP_SECRET = TEST_SECRET;
+  vi.useFakeTimers();
+  vi.setSystemTime(TEST_TIMESTAMP_SECONDS * 1000);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 // ─── App Proxy HMAC ───────────────────────────────────────────────────────────
@@ -25,7 +32,7 @@ describe("verifyAppProxyHmac", () => {
       shop: "test-shop.myshopify.com",
       path_prefix: "/apps/my-collection",
       logged_in_customer_id: "12345",
-      timestamp: "1700000000",
+      timestamp: String(TEST_TIMESTAMP_SECONDS),
       ...overrides,
     };
 
@@ -54,12 +61,61 @@ describe("verifyAppProxyHmac", () => {
     );
   });
 
+  it("throws HMAC_INVALID when a required identity parameter is duplicated", () => {
+    const params = buildValidParams();
+    params.append("logged_in_customer_id", "12345");
+
+    expect(() => verifyAppProxyHmac(params)).toThrow(
+      expect.objectContaining({ code: ErrorCode.HMAC_INVALID })
+    );
+  });
+
+  it("throws HMAC_INVALID when the signed timestamp is expired", () => {
+    const params = buildValidParams({ timestamp: String(TEST_TIMESTAMP_SECONDS - 301) });
+
+    expect(() => verifyAppProxyHmac(params)).toThrow(
+      expect.objectContaining({ code: ErrorCode.HMAC_INVALID })
+    );
+  });
+
+  it("throws HMAC_INVALID when the signed timestamp is too far in the future", () => {
+    const params = buildValidParams({ timestamp: String(TEST_TIMESTAMP_SECONDS + 301) });
+
+    expect(() => verifyAppProxyHmac(params)).toThrow(
+      expect.objectContaining({ code: ErrorCode.HMAC_INVALID })
+    );
+  });
+
+  it("accepts a signed timestamp at the maximum allowed clock difference", () => {
+    const params = buildValidParams({ timestamp: String(TEST_TIMESTAMP_SECONDS - 300) });
+
+    expect(() => verifyAppProxyHmac(params)).not.toThrow();
+  });
+
   it("throws HMAC_INVALID when signature is tampered", () => {
     const params = buildValidParams();
     params.set("signature", "a".repeat(64)); // wrong hex
 
     expect(() => verifyAppProxyHmac(params)).toThrow(
       expect.objectContaining({ code: ErrorCode.HMAC_INVALID })
+    );
+  });
+
+  it("throws HMAC_INVALID when signature is not a 64-character hexadecimal digest", () => {
+    const params = buildValidParams();
+    params.set("signature", "not-a-hex-signature");
+
+    expect(() => verifyAppProxyHmac(params)).toThrow(
+      expect.objectContaining({ code: ErrorCode.HMAC_INVALID })
+    );
+  });
+
+  it("throws a configuration error when the Shopify app secret is unavailable", () => {
+    const params = buildValidParams();
+    delete process.env.SHOPIFY_APP_SECRET;
+
+    expect(() => verifyAppProxyHmac(params)).toThrow(
+      "SHOPIFY_APP_SECRET is not set"
     );
   });
 
@@ -82,6 +138,8 @@ describe("verifyAppProxyHmac", () => {
   it("throws HMAC_INVALID when signed with a wrong secret", () => {
     const params = new URLSearchParams({
       shop: "test.myshopify.com",
+      path_prefix: "/apps/my-collection",
+      logged_in_customer_id: "12345",
       timestamp: "1700000000",
     });
     const message = [...params.entries()].sort().map(([key, value]) => `${key}=${value}`).join("");

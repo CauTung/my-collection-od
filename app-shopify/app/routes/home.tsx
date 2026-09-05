@@ -14,55 +14,46 @@
  */
 
 import type { LoaderFunctionArgs } from "react-router";
-import { verifyAppProxyHmac } from "~/lib/hmac.server";
-import { getQueryParams } from "~/lib/session.server";
+import { withErrorHandler } from "~/lib/error-handler.server";
+import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { logger } from "~/lib/logger.server";
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  try {
-    const url = new URL(request.url);
-    const params = getQueryParams(request);
+export const loader = withErrorHandler(async ({ request }: LoaderFunctionArgs) => {
+  const url = new URL(request.url);
+  const params = Object.fromEntries(url.searchParams.entries());
 
-    // DEBUG: Log all incoming params to see what Shopify sends
-    logger.info("App Proxy request received", {
-      url: url.toString(),
-      params,
-      hasSignature: !!params["signature"],
-      hasShop: !!params["shop"],
-      hasCustomerId: !!params["logged_in_customer_id"],
-    });
+  // Never log the complete URL because it contains the reusable App Proxy signature.
+  logger.info("App Proxy request received", {
+    pathname: url.pathname,
+    hasSignature: !!params["signature"],
+    hasShop: !!params["shop"],
+    hasCustomerId: !!params["logged_in_customer_id"],
+  });
 
-    const isAppProxy = !!params["signature"];
+  const isAppProxy = !!params["signature"];
 
-    if (!isAppProxy) {
-      return new Response(
-        "<html><body><h1>Downies My Collection App</h1><p>This app is accessed via Shopify storefront.</p></body></html>",
-        { status: 200, headers: { "Content-Type": "text/html" } }
-      );
-    }
-
-    verifyAppProxyHmac(url.searchParams);
-
-    const customerId = params["logged_in_customer_id"] || "";
-    const shop = params["shop"] || "";
-    const pathPrefix = params["path_prefix"] || "/apps/my-collection";
-
-    const html = buildDashboardHtml(customerId, shop, pathPrefix);
-
-    return new Response(html, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/liquid",
-      },
-    });
-  } catch (error) {
-    logger.error("UNHANDLED ERROR in home.tsx loader", { error: String(error) });
-    return new Response("<div class='dc-app'>Error: " + String(error) + "</div>", {
-      status: 200,
-      headers: { "Content-Type": "application/liquid" },
-    });
+  if (!isAppProxy) {
+    return new Response(
+      "<html><body><h1>Downies My Collection App</h1><p>This app is accessed via Shopify storefront.</p></body></html>",
+      { status: 200, headers: { "Content-Type": "text/html" } }
+    );
   }
-};
+
+  authenticateAppProxyRequest(request);
+
+  const customerId = params["logged_in_customer_id"] || "";
+  const shop = params["shop"] || "";
+  const pathPrefix = params["path_prefix"] || "/apps/my-collection";
+
+  const html = buildDashboardHtml(customerId, shop, pathPrefix);
+
+  return new Response(html, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/liquid",
+    },
+  });
+});
 
 // No default export — loader-only route for App Proxy
 // This prevents React Router from trying to SSR a component

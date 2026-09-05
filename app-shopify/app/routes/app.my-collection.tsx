@@ -14,35 +14,26 @@
  */
 
 import type { LoaderFunctionArgs } from "react-router";
-import { verifyAppProxyHmac } from "~/lib/hmac.server";
-import { getQueryParams } from "~/lib/session.server";
-import { logger } from "~/lib/logger.server";
+import { withErrorHandler } from "~/lib/error-handler.server";
+import { authenticateAppProxyRequest } from "~/lib/session.server";
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  try {
-    const params = getQueryParams(request);
-    verifyAppProxyHmac(new URL(request.url).searchParams);
+export const loader = withErrorHandler(async ({ request }: LoaderFunctionArgs) => {
+  authenticateAppProxyRequest(request);
+  const params = Object.fromEntries(new URL(request.url).searchParams.entries());
 
-    const customerId = params["logged_in_customer_id"] || "";
-    const shop = params["shop"] || "";
-    const pathPrefix = params["path_prefix"] || "";
+  const customerId = params["logged_in_customer_id"] || "";
+  const shop = params["shop"] || "";
+  const pathPrefix = params["path_prefix"] || "";
 
-    const html = buildDashboardHtml(customerId, shop, pathPrefix);
+  const html = buildDashboardHtml(customerId, shop, pathPrefix);
 
-    return new Response(html, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/liquid",
-      },
-    });
-  } catch (error) {
-    logger.error("UNHANDLED ERROR in app.my-collection.tsx loader", { error: String(error) });
-    return new Response("<div class='dc-app'>Error: " + String(error) + "</div>", {
-      status: 200,
-      headers: { "Content-Type": "application/liquid" },
-    });
-  }
-};
+  return new Response(html, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/liquid",
+    },
+  });
+});
 
 function buildDashboardHtml(
   customerId: string,

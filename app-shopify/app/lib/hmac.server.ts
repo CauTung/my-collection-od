@@ -15,8 +15,16 @@
 
 import { createHmac, timingSafeEqual } from "crypto";
 import { AppError } from "./error-handler.server";
+import { APP_PROXY_MAX_TIMESTAMP_SKEW_SECONDS } from "~/config/constants";
 import { ErrorCode } from "~/types";
 
+const REQUIRED_SINGLE_VALUE_APP_PROXY_PARAMETERS = [
+  "signature",
+  "shop",
+  "path_prefix",
+  "logged_in_customer_id",
+  "timestamp",
+] as const;
 
 function getAppSecret(): string {
   // Read lazily — not at module load time — so tests can inject via process.env
@@ -36,7 +44,7 @@ function getAppSecret(): string {
  * Shopify signs App Proxy requests by:
  * 1. Taking all query parameters except "signature".
  * 2. Sorting them alphabetically by key.
- * 3. Joining as "key=value" pairs with "&".
+ * 3. Grouping duplicate values with commas and concatenating sorted "key=value" entries.
  * 4. Computing HMAC-SHA256 with the App Secret.
  *
  * @param queryParams - The parsed query parameters from the incoming request URL.
@@ -44,10 +52,20 @@ function getAppSecret(): string {
  */
 export function verifyAppProxyHmac(queryParams: URLSearchParams): void {
   const secret = getAppSecret();
+
+  for (const parameter of REQUIRED_SINGLE_VALUE_APP_PROXY_PARAMETERS) {
+    if (queryParams.getAll(parameter).length !== 1) {
+      throw new AppError(
+        ErrorCode.HMAC_INVALID,
+        `App Proxy request must contain exactly one ${parameter} parameter`
+      );
+    }
+  }
+
   const incomingSignature = queryParams.get("signature");
 
-  if (!incomingSignature) {
-    throw new AppError(ErrorCode.HMAC_INVALID, "Missing signature parameter in App Proxy request");
+  if (!incomingSignature || !/^[a-fA-F0-9]{64}$/.test(incomingSignature)) {
+    throw new AppError(ErrorCode.HMAC_INVALID, "Invalid App Proxy signature format");
   }
 
   // Shopify groups duplicate keys, joins their values with commas, then joins the
@@ -77,6 +95,15 @@ export function verifyAppProxyHmac(queryParams: URLSearchParams): void {
     !timingSafeEqual(computedBuffer, incomingBuffer)
   ) {
     throw new AppError(ErrorCode.HMAC_INVALID, "App Proxy HMAC verification failed");
+  }
+
+  const timestamp = Number(queryParams.get("timestamp"));
+  const currentTimestamp = Math.floor(Date.now() / 1000);
+  if (
+    !Number.isSafeInteger(timestamp) ||
+    Math.abs(currentTimestamp - timestamp) > APP_PROXY_MAX_TIMESTAMP_SKEW_SECONDS
+  ) {
+    throw new AppError(ErrorCode.HMAC_INVALID, "App Proxy request timestamp is invalid or expired");
   }
 }
 
