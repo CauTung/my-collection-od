@@ -22,10 +22,12 @@ import { claimOrderSync } from "./dedup.server";
 import { checkProductsHaveCollectibleData, updateCustomerSyncStateMetafields, type SyncProgress } from "./metafield.server";
 import { upsertCollectionItemByProduct } from "./metaobject.server";
 import { recalculateAndCacheStats } from "./stats.server";
-import { acquireJobSlot, releaseJobSlot } from "./queue.server";
+import { scheduleJob, type ScheduledJob } from "./queue.server";
 import { logger } from "./logger.server";
 import { filterCoinLineItems, buildCollectibleProductIds } from "./product-filter.server";
 import type { ShopifyLineItem } from "~/types";
+import { extractShopifyNumericId } from "./shopify-id.server";
+import { mapSettledInChunks } from "./concurrency.server";
 
 interface BatchSyncOrdersResponse {
   orders?: {
@@ -57,26 +59,34 @@ interface AggregatedItem {
  * Triggers an async background sync job for a customer.
  * Returns immediately with the job status.
  */
-export async function triggerBatchSync(customerId: string): Promise<string> {
-  // Check cross-customer system limit
-  if (!acquireJobSlot()) {
-    await updateCustomerSyncStateMetafields(customerId, { sync_status: "queued" });
-    return "queued";
-  }
-
-  // Update status to syncing
-  // Note: We omit sync_progress here because runBatchSyncBackground sets it once items are found,
-  // saving a redundant GraphQL mutation on startup.
-  await updateCustomerSyncStateMetafields(customerId, {
-    sync_status: "syncing",
-  });
-
-  // Start background processing (fire and forget)
-  runBatchSyncBackground(customerId).catch((error) => {
-    logger.error("Fatal error in background sync job", { customerId, error: String(error) });
-  });
-
-  return "syncing";
+export async function triggerBatchSync(customerId: string): Promise<ScheduledJob> {
+  const emptyProgress: SyncProgress = { processed: 0, total: 0, failed: 0 };
+  return scheduleJob(
+    customerId,
+    () => updateCustomerSyncStateMetafields(customerId, {
+      sync_status: "queued",
+      sync_progress: emptyProgress,
+    }),
+    async () => {
+      try {
+        await updateCustomerSyncStateMetafields(customerId, {
+          sync_status: "syncing",
+          sync_progress: emptyProgress,
+        });
+      } catch (error) {
+        try {
+          await finishSync(customerId, emptyProgress, "failed");
+        } catch (terminalStateError) {
+          logger.error("Failed to persist terminal state after sync admission failure", {
+            customerId,
+            error: String(terminalStateError),
+          });
+        }
+        throw error;
+      }
+      await runBatchSyncBackground(customerId);
+    }
+  );
 }
 
 /**
@@ -94,7 +104,8 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
 
     // 2. Query historical orders
     // Note: customerId is a GID from the session layer, so it's safe from injection, but usually variables are preferred.
-    const queryStr = `customer_id:'${customerId}' AND created_at:>'${lookbackStr}' AND financial_status:paid`;
+    const numericCustomerId = extractShopifyNumericId(customerId);
+    const queryStr = `customer_id:${numericCustomerId} AND created_at:>'${lookbackStr}' AND financial_status:paid`;
 
     // In MVP, we fetch up to HISTORICAL_SYNC_MAX_ORDERS in one go. If more, we'd need pagination.
     const result = await shopifyGraphQL<BatchSyncOrdersResponse>(
@@ -118,14 +129,19 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
       { query: queryStr, first: HISTORICAL_SYNC_MAX_ORDERS }
     );
 
-    const orders = result.data?.orders?.nodes || [];
+    const orderConnection = result.data?.orders;
+    if (!orderConnection) {
+      throw new Error("Shopify did not return the historical orders payload");
+    }
+    const orders = orderConnection.nodes ?? [];
 
     if (orders.length === 0) {
       await finishSync(customerId, progress, "completed");
       return;
     }
 
-    // 3. Dedup orders and collect line items
+    // 3. Collect candidates before claiming orders. Product lookup failures must not
+    // leave permanent order claims when no collection mutation has started.
     type SyncLineItem = ShopifyLineItem & {
       product_gid: string;
       order_id: string;
@@ -134,18 +150,6 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     const rawLineItems: Array<SyncLineItem> = [];
 
     for (const order of orders) {
-      // Dedup on order level
-      let claimed = false;
-      try {
-        claimed = await claimOrderSync(customerId, order.id);
-      } catch (error) {
-        progress.failed++;
-        logger.error("Failed to claim order during batch sync", { customerId, orderId: order.id, error: String(error) });
-        continue; // Skip on unexpected failure so we don't drop silently, but isolated from rest of batch
-      }
-
-      if (!claimed) continue; // Skip already synced orders
-
       const items = order.lineItems?.nodes || [];
       for (const item of items) {
         if (item.product?.id) {
@@ -185,10 +189,45 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
       return;
     }
 
-    // 5. Aggregate by product_id to prevent race conditions within the same batch
+    const coinsByOrder = new Map<string, Array<SyncLineItem>>();
+    for (const item of validCoins) {
+      const orderItems = coinsByOrder.get(item.order_id) ?? [];
+      orderItems.push(item);
+      coinsByOrder.set(item.order_id, orderItems);
+    }
+
+    const claimResults = await mapSettledInChunks(
+      Array.from(coinsByOrder.entries()),
+      BATCH_SYNC_CONCURRENCY,
+      async ([orderId, items]) => ({
+        items,
+        claimed: await claimOrderSync(customerId, orderId),
+      })
+    );
+    const claimedCoins: Array<SyncLineItem> = [];
+    for (const result of claimResults) {
+      if (result.status === "fulfilled") {
+        progress.processed += 1;
+        if (result.value.claimed) claimedCoins.push(...result.value.items);
+      } else {
+        progress.failed += 1;
+        logger.error("Failed to claim order during batch sync", {
+          customerId,
+          error: String(result.reason),
+        });
+      }
+    }
+
+    if (claimedCoins.length === 0) {
+      progress.total = coinsByOrder.size;
+      await finishSync(customerId, progress, progress.failed > 0 ? "failed" : "completed");
+      return;
+    }
+
+    // 5. Aggregate claimed items by product_id to prevent races within the same batch.
     const aggregated = new Map<string, AggregatedItem>();
 
-    for (const item of validCoins) {
+    for (const item of claimedCoins) {
       const existing = aggregated.get(item.product_gid);
       if (existing) {
         existing.quantity += item.quantity;
@@ -204,15 +243,15 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     }
 
     const itemsToUpsert = Array.from(aggregated.values());
-    progress.total = itemsToUpsert.length;
+    progress.total = coinsByOrder.size + itemsToUpsert.length;
 
     // Update progress early
     await updateCustomerSyncStateMetafields(customerId, { sync_progress: progress });
 
     // 6. Process in concurrent chunks
     // Note: We use Promise.allSettled instead of GraphQL Alias Batching here.
-    // This is a deliberate tradeoff: it provides strong isolation (one item failure
-    // doesn't fail the batch) and the async architecture removes strict timeout limits.
+    // This provides item-level exception isolation while keeping concurrency bounded.
+    // The registered background task remains subject to the hosting function timeout.
     for (let i = 0; i < itemsToUpsert.length; i += BATCH_SYNC_CONCURRENCY) {
       const chunk = itemsToUpsert.slice(i, i + BATCH_SYNC_CONCURRENCY);
 
@@ -248,14 +287,11 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     await recalculateAndCacheStats(customerId);
 
     // 8. Mark as completed
-    await finishSync(customerId, progress, "completed");
+    await finishSync(customerId, progress, progress.failed > 0 ? "failed" : "completed");
 
   } catch (error) {
     logger.error("Batch sync failed abruptly", { customerId, error: String(error) });
     await finishSync(customerId, progress, "failed");
-  } finally {
-    // Release system-wide job slot
-    releaseJobSlot();
   }
 }
 

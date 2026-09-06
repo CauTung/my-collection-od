@@ -338,3 +338,100 @@
 - Recommendation: Confirm Shopify delivery-order guarantees and design a privacy-safe suppression mechanism. Retaining the raw customer ID as a tombstone would itself conflict with erasure, so this cannot be solved by copying the deleted identifier into another record.
 - Acceptance: Staging lifecycle test delivers a commerce event after redaction and proves no customer-associated data is recreated, using a mechanism approved by privacy/legal owners.
 - Owner: privacy/architecture decision gate
+
+## AUD-029 — Queued Batch Jobs Were Never Executed
+
+- Severity: P1
+- Status: Fixed locally; independent review pending
+- Location: `app/lib/queue.server.ts`, `app/lib/batch-sync.server.ts`
+- Evidence: The previous limiter returned `false` at capacity and wrote `queued`, but retained no callback and had no drain path. The client retry assumption did not prove eventual execution.
+- Remediation: Added an instance-local FIFO scheduler with a completion promise, automatic drain on settlement, and duplicate-customer coalescing.
+- Acceptance: Lifecycle test dispatches 12 jobs against a cap of 10, proves two are initially queued, then proves every queued job starts FIFO and completes at a logical time after dispatch.
+
+## AUD-030 — Batch Sync Used Unregistered Fire-and-Forget Work
+
+- Severity: P1
+- Status: Fixed for the Vercel invocation lifecycle; maximum-duration gate remains AUD-036
+- Location: `app/lib/background-task.server.ts`, `app/routes/api.collection.sync.ts`
+- Evidence: The route returned while an unobserved promise continued in memory, allowing the serverless runtime to freeze or terminate it.
+- Remediation: Register the scheduler's complete queued-to-terminal promise with official Vercel `waitUntil`; local/test execution observes the same promise in-process.
+- Acceptance: Unit test proves Vercel registration receives the observed promise; staging must prove work continues after HTTP 202.
+
+## AUD-031 — Sync Trigger Failure Was Disguised as HTTP 200
+
+- Severity: P1
+- Status: Fixed locally; independent review pending
+- Location: `app/routes/api.collection.sync.ts`
+- Evidence: A route-local catch returned `{success:false}` with HTTP 200 for scheduler or Admin state failures.
+- Impact: Frontend and monitoring could treat a failed trigger as a successful request.
+- Remediation: Removed the catch and let `withErrorHandler()` return the standard HTTP 500 contract.
+- Acceptance: Route test asserts exact 500 `INTERNAL_ERROR` and no background registration.
+
+## AUD-032 — Batch Claims Were Created Before Product Prerequisites
+
+- Severity: P1
+- Status: Fixed locally; item-level mutation recovery remains AUD-034
+- Location: `app/lib/batch-sync.server.ts`
+- Evidence: Orders were claimed before the shared collectible metafield lookup; a transient lookup failure permanently skipped those orders on retry.
+- Remediation: Collect and classify line items first, then claim only orders containing valid collectible items using bounded concurrency.
+- Acceptance: Test forces product lookup failure and proves zero claim calls plus terminal failed status.
+
+## AUD-033 — Historical Order Search Used a Customer GID Where Shopify Expects Numeric ID
+
+- Severity: P0
+- Status: Fixed locally; real historical query verification pending
+- Location: `app/lib/shopify-id.server.ts`, `app/lib/batch-sync.server.ts`
+- Evidence: The order search expression interpolated `gid://shopify/Customer/...` into `customer_id`, which uses Shopify's numeric customer ID filter.
+- Remediation: Added strict shared Shopify ID normalization and emit `customer_id:123` from an authenticated customer GID.
+- Acceptance: Unit test asserts the query starts with the exact numeric filter and contains no customer GID; staging must execute it against known historical orders.
+
+## AUD-034 — Batch Item Failure Remains Locked by Order Dedup
+
+- Severity: P1
+- Status: Open — architecture decision required
+- Location: `app/lib/batch-sync.server.ts`, `app/lib/dedup.server.ts`
+- Evidence: Each order claim is durable before its product upserts. A rejected product increments `failed` and marks the job failed, but retry skips the already-claimed order.
+- Impact: A transient mutation failure can permanently omit an item even though the UI truthfully reports job failure.
+- Recommendation: Persist item-level event contributions/status or implement a durable replayable job model; returning/retrying at order granularity can double-apply successful sibling products.
+- Acceptance: A test with one successful and one failed product retries and reaches the exact final state without incrementing the successful product twice.
+- Owner: architecture decision gate
+
+## AUD-035 — Orders With More Than 250 Line Items Are Truncated
+
+- Severity: P2
+- Status: Open
+- Location: historical orders GraphQL query
+- Evidence: Each nested `lineItems(first: 250)` connection omits `pageInfo` and has no continuation query.
+- Impact: Extremely large orders can be only partially synchronized.
+- Recommendation: Confirm the business maximum order size; add per-order pagination if 250 is not a guaranteed upper bound.
+- Acceptance: Boundary test with 251 line items either rejects by documented business rule or processes the final item through pagination.
+
+## AUD-036 — Vercel Maximum Duration Can Still Terminate Batch Work
+
+- Severity: P1
+- Status: Open — staging/deployment decision required
+- Location: Vercel function configuration and historical sync lifecycle
+- Evidence: `waitUntil` attaches work after response but does not extend it beyond the Function's configured maximum duration.
+- Impact: Slow Shopify responses or maximum-size history can leave status `syncing` and queued jobs unfinished.
+- Recommendation: Measure the 200-order worst case on the target Vercel plan and configure a supported duration; use durable continuation if the bound cannot be guaranteed.
+- Acceptance: Staging evidence proves terminal state within the configured duration under throttling, or a durable resume test proves recovery after termination.
+- Owner: deployment/architecture decision gate
+
+## AUD-037 — Official Vercel React Router Preset Has a Major-Version Peer Conflict
+
+- Severity: P1 for deployment readiness
+- Status: Open for Batch E
+- Location: `react-router.config.ts`, package versions
+- Evidence: Project uses React Router 8.3.1, while the currently resolved `@vercel/react-router@1.3.6` package declares peer `@react-router/dev@7`; installation failed with `ERESOLVE` and was not forced.
+- Impact: The project still lacks the recommended Vercel preset/function-level configuration path.
+- Recommendation: Decide whether to align on React Router 7 or wait for/use a verified adapter supporting 8; do not bypass the peer contract with `--force`.
+- Owner: Batch E decision gate
+
+## AUD-038 — Batch Concurrency Was Tested Against the Wrong Work Unit
+
+- Severity: P1
+- Status: Fixed locally; independent review pending
+- Location: `tests/unit/batch-sync-integration.test.ts`
+- Evidence: The earlier test measured product upserts, used only 50 records despite claiming a 200-order scale test, and asserted only `> 0` plus `<= 5`.
+- Remediation: The scale test now uses exactly 200 items and asserts exact concurrency 5; a separate controlled test proves order claims also reach exactly concurrency 5 after prerequisites.
+- Acceptance: Both exact assertions pass without timing-based sleeps.

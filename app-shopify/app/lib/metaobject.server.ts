@@ -19,6 +19,7 @@ import { AppError } from "./error-handler.server";
 import { ErrorCode, type CollectionItem, type CollectionFilters, type CollectionPage } from "~/types";
 import { logger } from "./logger.server";
 import { buildMetaobjectFieldFilter } from "./metaobject-search.server";
+import { extractShopifyNumericId } from "./shopify-id.server";
 import {
   COLLECTION_ITEM_METAOBJECT_TYPE,
   COLLECTION_PAGE_SIZE,
@@ -29,14 +30,9 @@ import {
 const productUpsertTails = new Map<string, Promise<void>>();
 
 /** Helper to extract numeric ID from a GID. */
-function extractNumericId(gid: string): string {
-  const parts = gid.split("/");
-  return parts[parts.length - 1] ?? gid;
-}
-
 /** Helper to build the O(1) lookup handle. */
 function buildItemHandle(customerId: string, itemId: string): string {
-  return `${extractNumericId(customerId)}-${itemId}`;
+  return `${extractShopifyNumericId(customerId)}-${itemId}`;
 }
 
 /** Helper to map raw Shopify Metaobject to CollectionItem interface. */

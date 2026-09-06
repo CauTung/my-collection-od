@@ -20,6 +20,7 @@ import { logger } from "./logger.server";
 import { AppError } from "./error-handler.server";
 import { ErrorCode } from "~/types";
 import { buildMetaobjectFieldFilter } from "./metaobject-search.server";
+import { extractShopifyIdSegment } from "./shopify-id.server";
 import {
   COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE,
   METAOBJECT_MAX_PAGE_SIZE,
@@ -29,17 +30,12 @@ import {
  * Extract the numeric part from a Shopify GID.
  * Example: "gid://shopify/Customer/12345" → "12345"
  */
-function extractNumericId(gid: string): string {
-  const parts = gid.split("/");
-  return parts[parts.length - 1] || gid;
-}
-
 /**
  * Build the normalized dedup lock handle for an order.
  * Format: "dedup-{customerId}-{orderId}" using numeric IDs.
  */
 function buildDedupHandle(customerId: string, orderId: string): string {
-  return `dedup-${extractNumericId(customerId)}-${extractNumericId(orderId)}`;
+  return `dedup-${extractShopifyIdSegment(customerId)}-${extractShopifyIdSegment(orderId)}`;
 }
 
 /**

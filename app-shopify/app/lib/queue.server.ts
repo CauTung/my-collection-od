@@ -1,72 +1,149 @@
 /**
- * app/lib/queue.server.ts
+ * Instance-local FIFO scheduler for historical sync jobs.
  *
- * System-wide concurrent batch sync job limiter.
- *
- * Design decisions:
- * - BATCH_SYNC_CONCURRENCY (in batch-sync.server.ts) only limits parallelism within
- *   ONE customer's job. It does NOT prevent multiple customers from running sync jobs
- *   simultaneously, which could overload the shop's shared Shopify Leaky Bucket.
- *   (Cross-customer throttling).
- * - This module maintains a simple in-memory counter capped at MAX_CONCURRENT_BATCH_SYNC_JOBS.
- *   Jobs beyond the cap receive status "queued" and must be retried by the client.
- * - Trade-off: in serverless with multiple instances, each instance has its own counter.
- *   The total across instances could exceed the limit. This is an accepted trade-off
- *   using an in-memory counter. If cross-instance throttling becomes needed in
- *   production, a distributed lock (Redis/Shopify Metaobject) could be used.
+ * The scheduler enforces the cross-customer concurrency cap, retains queued callbacks,
+ * starts them when a running job settles, and exposes one completion promise covering
+ * the full queued-to-terminal lifecycle. Vercel instances do not share this state.
  */
 
 import { MAX_CONCURRENT_BATCH_SYNC_JOBS } from "~/config/constants";
 import { logger } from "./logger.server";
 
-// In-memory job counter — capped at MAX_CONCURRENT_BATCH_SYNC_JOBS per instance
+export type ScheduledJobStatus = "syncing" | "queued";
+
+export interface ScheduledJob {
+  status: ScheduledJobStatus;
+  completion: Promise<void>;
+  isNew: boolean;
+}
+
+interface QueueEntry {
+  key: string;
+  run: () => Promise<void>;
+  completion: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  status: ScheduledJobStatus;
+  ready: boolean;
+  admission: Promise<void>;
+}
+
+const jobsByKey = new Map<string, QueueEntry>();
+const pendingJobs: QueueEntry[] = [];
 let activeJobs = 0;
 
 /**
- * Attempt to start a new batch sync job.
- * Returns true if the job can proceed, false if the system is at capacity.
+ * Schedule one uniquely keyed job and return its complete lifecycle promise.
  *
- * @returns true if a slot was acquired (caller MUST release via releaseJobSlot).
+ * @param key - Stable instance-local identity, normally the authenticated customer GID.
+ * @param markQueued - Persists queued state before the entry becomes eligible to start.
+ * @param run - Complete job lifecycle, including syncing and terminal state updates.
+ * @returns Initial state, completion promise, and whether a new entry was created.
+ * @throws The queued-state error when it cannot be persisted.
  */
-export function acquireJobSlot(): boolean {
-  if (activeJobs >= MAX_CONCURRENT_BATCH_SYNC_JOBS) {
-    logger.warn("System at max concurrent batch sync capacity — job queued", {
+export async function scheduleJob(
+  key: string,
+  markQueued: () => Promise<void>,
+  run: () => Promise<void>
+): Promise<ScheduledJob> {
+  const existing = jobsByKey.get(key);
+  if (existing) {
+    await existing.admission;
+    return { status: existing.status, completion: existing.completion, isNew: false };
+  }
+
+  let resolveCompletion: (() => void) | undefined;
+  let rejectCompletion: ((error: unknown) => void) | undefined;
+  const completion = new Promise<void>((resolve, reject) => {
+    resolveCompletion = resolve;
+    rejectCompletion = reject;
+  });
+  const entry: QueueEntry = {
+    key,
+    run,
+    completion,
+    resolve: () => resolveCompletion?.(),
+    reject: (error) => rejectCompletion?.(error),
+    status: activeJobs < MAX_CONCURRENT_BATCH_SYNC_JOBS ? "syncing" : "queued",
+    ready: true,
+    admission: Promise.resolve(),
+  };
+  jobsByKey.set(key, entry);
+
+  if (entry.status === "syncing") {
+    startEntry(entry);
+  } else {
+    entry.ready = false;
+    pendingJobs.push(entry);
+    entry.admission = Promise.resolve().then(markQueued);
+    try {
+      await entry.admission;
+    } catch (error) {
+      jobsByKey.delete(key);
+      const pendingIndex = pendingJobs.indexOf(entry);
+      if (pendingIndex >= 0) pendingJobs.splice(pendingIndex, 1);
+      entry.reject(error);
+      void entry.completion.catch(() => undefined);
+      drainQueue();
+      throw error;
+    }
+    entry.ready = true;
+    logger.warn("Batch sync job queued on this instance", {
       activeJobs,
+      queuedJobs: pendingJobs.length,
       limit: MAX_CONCURRENT_BATCH_SYNC_JOBS,
     });
-    return false;
+    drainQueue();
   }
-  activeJobs++;
-  logger.info("Batch sync job slot acquired", {
-    activeJobs,
-    limit: MAX_CONCURRENT_BATCH_SYNC_JOBS,
-  });
-  return true;
+
+  return { status: entry.status, completion, isNew: true };
 }
 
-/**
- * Release a job slot after the batch sync job completes (success or failure).
- * MUST be called in a finally block to prevent slot leaks.
- */
-export function releaseJobSlot(): void {
-  if (activeJobs > 0) {
-    activeJobs--;
-  }
-  logger.info("Batch sync job slot released", {
-    activeJobs,
-    limit: MAX_CONCURRENT_BATCH_SYNC_JOBS,
-  });
-}
-
-/** Return the current active job count — for monitoring and testing. */
+/** Return the current active job count for monitoring and tests. */
 export function getActiveJobCount(): number {
   return activeJobs;
 }
 
-/**
- * Reset the counter to zero. ONLY for use in tests.
- * Must NOT be called in production code.
- */
-export function resetJobCounter(): void {
+/** Return the current pending FIFO depth for monitoring and tests. */
+export function getPendingJobCount(): number {
+  return pendingJobs.length;
+}
+
+/** Reset scheduler state. Tests must call this only after all scheduled jobs settle. */
+export function resetJobQueue(): void {
   activeJobs = 0;
+  pendingJobs.length = 0;
+  jobsByKey.clear();
+}
+
+function startEntry(entry: QueueEntry): void {
+  entry.status = "syncing";
+  activeJobs += 1;
+  logger.info("Batch sync job started on this instance", {
+    activeJobs,
+    queuedJobs: pendingJobs.length,
+    limit: MAX_CONCURRENT_BATCH_SYNC_JOBS,
+  });
+
+  void Promise.resolve()
+    .then(entry.run)
+    .then(entry.resolve, entry.reject)
+    .finally(() => {
+      activeJobs -= 1;
+      jobsByKey.delete(entry.key);
+      logger.info("Batch sync job slot released", {
+        activeJobs,
+        queuedJobs: pendingJobs.length,
+        limit: MAX_CONCURRENT_BATCH_SYNC_JOBS,
+      });
+      drainQueue();
+    });
+}
+
+function drainQueue(): void {
+  while (activeJobs < MAX_CONCURRENT_BATCH_SYNC_JOBS && pendingJobs.length > 0) {
+    if (!pendingJobs[0]?.ready) return;
+    const next = pendingJobs.shift();
+    if (next) startEntry(next);
+  }
 }

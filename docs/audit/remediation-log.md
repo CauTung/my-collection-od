@@ -89,3 +89,29 @@ Verification:
 - Independent review round 1: six blockers found; four remediated in code/tests, cancellation/refund attribution remains an explicit P1 design gate, and real-store scope/release verification remains open
 - Independent review round 2: found invalid mocked Metaobject search syntax and missing `adminFilterable` capabilities; remediation migrated the configured dev store and added real query probes
 - Independent final reconciliation: AUD-015, AUD-021, AUD-022, AUD-023, and AUD-027 locally closed; no new P0/P1 implementation blocker beyond the explicitly open decision/external gates
+
+## Batch D — Historical Sync Lifecycle
+
+- Date: 2026-09-06
+- Findings: AUD-029 through AUD-038
+- Scope: Instance-local scheduling, serverless background lifetime, order prerequisites, and concurrency evidence
+
+Changes:
+
+- Replaced the counter-only limiter with a FIFO scheduler that retains queued jobs, drains after settlement, and coalesces duplicate customer requests.
+- Exposed one completion promise spanning queued dispatch through terminal execution.
+- Registered completion with Vercel `waitUntil` and removed route-level HTTP 200 error masking.
+- Normalized authenticated customer GIDs to numeric Shopify order-filter values.
+- Moved collectible-data lookup before atomic order claims and bounded claim concurrency at five.
+- Mark jobs failed when isolated claim/item failures are recorded.
+- Replaced sleep-based 50-item evidence with deterministic 200-item and exact order-claim concurrency tests.
+- Recorded item-level retry, 250-line-item pagination, Vercel maximum duration, and React Router adapter compatibility as open gates.
+
+Verification:
+
+- Typecheck: pass before independent review
+- Tests: 26 files and 119 tests pass before independent review
+- Lint: pass before independent review
+- Build: pending final verification
+- Vercel post-response lifecycle: mock only; staging verification pending
+- Independent review: pending

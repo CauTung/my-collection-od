@@ -107,8 +107,10 @@ denomination, country_of_issue, material, year_of_issue, issuer, quality, grade,
 | `stats.server.ts` | recalculateAndCacheStats() — sau mỗi CRUD |
 | `product-filter.server.ts` | filterCoinLineItems() — coin vs accessory classifier |
 | `batch-sync.server.ts` | Historical Batch Sync engine (async model, progress polling) |
+| `background-task.server.ts` | Đăng ký completion promise bằng Vercel `waitUntil`; local/test tiếp tục in-process |
 | `idempotency.server.ts` | Cache idempotency key theo customer + operation + resource + client UUID; failed mutation release claim để request có thể retry |
-| `queue.server.ts` | ACTIVE_BATCH_SYNC_JOBS in-memory counter |
+| `queue.server.ts` | FIFO scheduler theo instance: cap active jobs, giữ callback queued, drain khi slot rảnh, coalesce theo customer |
+| `shopify-id.server.ts` | Validate và tách numeric/safe segment từ Shopify GID cho order filters và handles |
 | `error-handler.server.ts` | AppError class + withErrorHandler() wrapper |
 | `logger.server.ts` | Structured JSON logger, auto-redact PII |
 
@@ -151,10 +153,14 @@ Giới hạn hiện tại cần quyết định trước go-live:
 
 ### 5.2 Historical Batch Sync (async model)
 ```
-POST /api/collection/sync → queue.canStartNewJob()
-    → trả về { status: 'syncing' } ngay
-    → background: query orders (lookback + max filter)
-    → filterCoinLineItems() → chunked Promise.allSettled()
+POST /api/collection/sync → queue.scheduleJob(customerId)
+    → scheduleJob(customer): syncing ngay hoặc FIFO queued; duplicate cùng customer dùng chung lifecycle
+    → registerBackgroundTask(completion) qua Vercel waitUntil
+    → trả HTTP 202 kèm status syncing/queued
+    → background: query orders bằng numeric customer_id (lookback + max 200)
+    → fetch collectible prerequisites trước khi tạo dedup claim
+    → claim orders theo chunk concurrency 5
+    → filterCoinLineItems() → upsert products theo chunk concurrency 5
     → GraphQL alias batch mutations (variables, cost-aware)
     → update sync_progress Customer Metafield
     → FE polling /api/collection.stats để xem tiến độ
@@ -185,6 +191,10 @@ Shopify App Proxy ký từng request tới `/api/collection*`
 **Proactive**: Sau mỗi response, kiểm tra `extensions.cost.throttleStatus.currentlyAvailable`. Nếu < `actualQueryCost * 2`, sleep để bucket hồi điểm.
 
 **Cross-customer throttle**: `ACTIVE_BATCH_SYNC_JOBS` in-memory counter. Job vượt `MAX_CONCURRENT_BATCH_SYNC_JOBS` → status 'queued', không reject.
+
+Queue hiện giữ FIFO callback và tự start queued job khi slot được release; test chứng minh toàn bộ vòng đời dispatch → queued → start → completion. Đây vẫn là state cấp-instance: nhiều Vercel instance không chia sẻ counter, queue hoặc duplicate-customer key.
+
+`waitUntil()` ngăn fire-and-forget bị freeze ngay sau HTTP response, nhưng background task vẫn bị giới hạn bởi maximum function duration của Vercel. Batch tối đa hoặc upstream chậm cần benchmark staging; vượt timeout cần durable external continuation, ngoài kiến trúc in-memory hiện tại.
 
 **Product upsert concurrency**: read-modify-write được serialize theo `customer_id + product_id` trong một server instance. Vì Vercel có nhiều instance và kiến trúc không có distributed lock/DB, concurrent upserts trên hai instance vẫn là residual risk cần verify trên dev store và quyết định riêng trước production.
 
@@ -221,3 +231,5 @@ Shopify App Proxy ký từng request tới `/api/collection*`
 | 2026-09-05 | Centralized webhook authentication, added TOML subscriptions, refund order lookup, cancellation ordering guard, and GDPR hard-delete | Align webhook delivery identity, lifecycle, and privacy behavior with Shopify contracts |
 | 2026-09-05 | Bounded webhook mutation concurrency, privacy deletion for dedup locks, Admin API `2026-07`, and `read_all_orders` scope | Close independent-review blockers for privacy completeness, request bursts, and old-order refund lookup |
 | 2026-09-05 | Corrected Metaobject field-search syntax and migrated searched fields to `adminFilterable` | Prevent mocked tests from hiding broken customer/product filters and incomplete privacy erasure on Shopify |
+| 2026-09-06 | Replaced batch counter-only queue with FIFO lifecycle scheduling, duplicate-customer coalescing, and Vercel `waitUntil` registration | Ensure queued jobs actually start and attach background work to the serverless invocation |
+| 2026-09-06 | Deferred batch order claims until collectible lookup succeeds and normalized order customer search to numeric ID | Avoid permanent claims on prerequisite failure and make Shopify order search contract valid |

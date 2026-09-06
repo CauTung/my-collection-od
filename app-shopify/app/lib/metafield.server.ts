@@ -15,6 +15,12 @@ import { shopifyGraphQL } from "./graphql-client.server";
 import { AppError } from "./error-handler.server";
 import { ErrorCode } from "~/types";
 import { logger } from "./logger.server";
+import { mapSettledInChunks } from "./concurrency.server";
+import { extractShopifyNumericId } from "./shopify-id.server";
+import {
+  COLLECTIBLE_LOOKUP_BATCH_SIZE,
+  COLLECTIBLE_LOOKUP_CONCURRENCY,
+} from "~/config/constants";
 
 // ─── Customer Metafields (Stats & Sync Status) ───────────────────────────────
 
@@ -216,13 +222,34 @@ export async function checkProductsHaveCollectibleData(
 ): Promise<Array<{ productGid: string; hasCollectibleData: boolean }>> {
   if (productGids.length === 0) return [];
 
+  const chunks: string[][] = [];
+  for (let index = 0; index < productGids.length; index += COLLECTIBLE_LOOKUP_BATCH_SIZE) {
+    chunks.push(productGids.slice(index, index + COLLECTIBLE_LOOKUP_BATCH_SIZE));
+  }
+  const results = await mapSettledInChunks(
+    chunks,
+    COLLECTIBLE_LOOKUP_CONCURRENCY,
+    checkProductChunkHasCollectibleData
+  );
+  const checks: Array<{ productGid: string; hasCollectibleData: boolean }> = [];
+  for (const result of results) {
+    if (result.status === "rejected") throw result.reason;
+    checks.push(...result.value);
+  }
+  return checks;
+}
+
+async function checkProductChunkHasCollectibleData(
+  productGids: string[]
+): Promise<Array<{ productGid: string; hasCollectibleData: boolean }>> {
+
   // Build a query with aliases for each product ID
   // e.g., prod_123: product(id: "gid://...") { metafield(...) { value } }
   let query = "query CheckCollectibleData {\n";
   const variables: Record<string, string> = {};
 
   productGids.forEach((gid, index) => {
-    const id = gid.split("/").pop()!;
+    const id = extractShopifyNumericId(gid);
     const alias = `prod_${id}`;
     // Using both namespaces to be safe
     query += `
@@ -245,10 +272,13 @@ export async function checkProductsHaveCollectibleData(
     variables
   );
 
-  const data = response.data || {};
+  if (!response.data) {
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, "Shopify did not return collectible product data");
+  }
+  const data = response.data;
   
   return productGids.map((gid) => {
-    const id = gid.split("/").pop()!;
+    const id = extractShopifyNumericId(gid);
     const alias = `prod_${id}`;
     const productNode = data[alias];
     

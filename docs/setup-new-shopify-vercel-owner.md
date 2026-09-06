@@ -596,6 +596,8 @@ Các mục dưới đây được ghi nhận từ trạng thái source hiện t�
 12. Namespace/type/config constants vẫn rải rác ngoài `app/config/constants.ts`.
 13. Webhook routes đã dùng shared authentication/parser và `withErrorHandler()`; partial item failure/dedup retry vẫn là residual risk cần quyết định.
 14. Cần rà lại toàn bộ hardcode numeric/string, GraphQL API versions, route paths và external URLs.
+15. Batch sync đã dùng `@vercel/functions` `waitUntil`, nhưng task vẫn bị giới hạn bởi maximum Function duration; phải benchmark 200-order sync trên đúng Vercel plan.
+16. Không ép cài `@vercel/react-router` bằng `--force`: bản resolve hiện tại yêu cầu React Router 7 trong khi source đang dùng React Router 8.3.1. Đây là decision gate của Batch E.
 
 Đây là danh sách đầu vào cho phiên audit kế tiếp. Không sửa rời rạc từng mục trước khi lập dependency map và test baseline, vì auth, scopes, token storage, webhook subscriptions và deployment config ảnh hưởng lẫn nhau.
 

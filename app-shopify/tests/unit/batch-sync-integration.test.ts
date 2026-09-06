@@ -11,13 +11,16 @@ import { BATCH_SYNC_CONCURRENCY } from "~/config/constants";
 import { upsertCollectionItemByProduct } from "~/lib/metaobject.server";
 import { shopifyGraphQL } from "~/lib/graphql-client.server";
 import { checkProductsHaveCollectibleData } from "~/lib/metafield.server";
+import { claimOrderSync } from "~/lib/dedup.server";
 
 // We need to wait for the background job to finish since it's fire-and-forget.
 // In tests, we can spy on finishSync or just wait for promises to resolve.
 
 vi.mock("~/lib/queue.server", () => ({
-  acquireJobSlot: vi.fn().mockReturnValue(true),
-  releaseJobSlot: vi.fn(),
+  scheduleJob: vi.fn((_key: string, _markQueued: () => Promise<void>, run: () => Promise<void>) => {
+    const completion = run();
+    return Promise.resolve({ status: "syncing" as const, completion, isNew: true });
+  }),
 }));
 
 vi.mock("~/lib/metafield.server", () => ({
@@ -44,9 +47,12 @@ vi.mock("~/lib/stats.server", () => ({
 const mockGraphQL = vi.mocked(shopifyGraphQL);
 const mockUpsert = vi.mocked(upsertCollectionItemByProduct);
 const mockCheckCollectible = vi.mocked(checkProductsHaveCollectibleData);
+const mockClaimOrder = vi.mocked(claimOrderSync);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockClaimOrder.mockResolvedValue(true);
+  mockUpsert.mockResolvedValue(undefined);
 });
 
 // Helper to track active promises to measure concurrency
@@ -54,7 +60,7 @@ beforeEach(() => {
 describe("Batch Sync Concurrency Integration", () => {
   it("processes a large number of items in chunks respecting BATCH_SYNC_CONCURRENCY", async () => {
     const customerId = "gid://shopify/Customer/999";
-    const TOTAL_ITEMS = 50; // Use 50 instead of 200 to keep test fast, but still > concurrency limit
+    const TOTAL_ITEMS = 200;
 
     // Generate 50 distinct orders, each with 1 coin
     const orders = Array.from({ length: TOTAL_ITEMS }).map((_, i) => ({
@@ -100,16 +106,60 @@ describe("Batch Sync Concurrency Integration", () => {
       return;
     });
 
-    await triggerBatchSync(customerId);
-    
-    // Wait for the background job to finish
-    await new Promise(resolve => setTimeout(resolve, (TOTAL_ITEMS / BATCH_SYNC_CONCURRENCY) * 15 + 50));
+    const scheduled = await triggerBatchSync(customerId);
+    await scheduled.completion;
 
     expect(mockUpsert).toHaveBeenCalledTimes(TOTAL_ITEMS);
     
     // Assert that the max concurrency never exceeded the limit
-    expect(maxConcurrency).toBeLessThanOrEqual(BATCH_SYNC_CONCURRENCY);
-    // It should hit exactly the limit since we fired all at once
-    expect(maxConcurrency).toBeGreaterThan(0);
+    expect(maxConcurrency).toBe(BATCH_SYNC_CONCURRENCY);
+  });
+
+  it("claims exactly five orders concurrently after product prerequisites succeed", async () => {
+    const customerId = "gid://shopify/Customer/999";
+    const orderCount = 12;
+    const orders = Array.from({ length: orderCount }, (_, index) => ({
+      id: `gid://shopify/Order/${index + 1}`,
+      createdAt: "2026-01-01T00:00:00Z",
+      lineItems: {
+        nodes: [{
+          id: `gid://shopify/LineItem/${index + 1}`,
+          title: `Coin ${index + 1}`,
+          quantity: 1,
+          variant: { price: "10.00" },
+          product: {
+            id: `gid://shopify/Product/${index + 1}`,
+            productType: "coins",
+          },
+        }],
+      },
+    }));
+    mockGraphQL.mockResolvedValueOnce({ data: { orders: { nodes: orders } } });
+    mockCheckCollectible.mockResolvedValueOnce(orders.map((order) => ({
+      productGid: order.lineItems.nodes[0].product.id,
+      hasCollectibleData: true,
+    })));
+
+    let releaseClaims: (() => void) | undefined;
+    const claimGate = new Promise<void>((resolve) => {
+      releaseClaims = resolve;
+    });
+    let activeClaims = 0;
+    let maximumClaims = 0;
+    mockClaimOrder.mockImplementation(async () => {
+      activeClaims += 1;
+      maximumClaims = Math.max(maximumClaims, activeClaims);
+      await claimGate;
+      activeClaims -= 1;
+      return true;
+    });
+
+    const scheduled = await triggerBatchSync(customerId);
+    await vi.waitFor(() => expect(maximumClaims).toBe(BATCH_SYNC_CONCURRENCY));
+    releaseClaims?.();
+    await scheduled.completion;
+
+    expect(mockClaimOrder).toHaveBeenCalledTimes(orderCount);
+    expect(maximumClaims).toBe(BATCH_SYNC_CONCURRENCY);
   });
 });

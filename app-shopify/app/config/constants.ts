@@ -85,6 +85,12 @@ export const BATCH_SYNC_CONCURRENCY = 5;
 /** Maximum concurrent Shopify mutations within one webhook delivery. */
 export const WEBHOOK_MUTATION_CONCURRENCY = 5;
 
+/** Maximum product aliases included in one collectible-data lookup query. */
+export const COLLECTIBLE_LOOKUP_BATCH_SIZE = 25;
+
+/** Maximum collectible-data lookup queries active at once. */
+export const COLLECTIBLE_LOOKUP_CONCURRENCY = 5;
+
 /**
  * Maximum global concurrent Batch Sync jobs running system-wide (cross-customer).
  * This is an in-memory instance-level counter (not a distributed lock) — an acceptable

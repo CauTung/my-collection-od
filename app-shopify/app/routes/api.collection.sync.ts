@@ -8,6 +8,7 @@ import { type ActionFunctionArgs } from "react-router";
 import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { triggerBatchSync } from "~/lib/batch-sync.server";
 import { withErrorHandler } from "~/lib/error-handler.server";
+import { registerBackgroundTask } from "~/lib/background-task.server";
 
 async function actionHandler({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") {
@@ -16,26 +17,16 @@ async function actionHandler({ request }: ActionFunctionArgs) {
 
   const session = authenticateAppProxyRequest(request);
 
-  try {
-    await triggerBatchSync(session.customer_id);
+  const scheduled = await triggerBatchSync(session.customer_id);
+  registerBackgroundTask(scheduled.completion);
 
-    return new Response(JSON.stringify({ 
-      success: true, 
-      message: "Sync process triggered successfully" 
-    }), { 
-      status: 202, 
-      headers: { "Content-Type": "application/json" } 
-    }); 
-  } catch (err) {
-    return new Response(JSON.stringify({
-      success: false,
-      message: "Could not trigger sync. Please check Admin API token in .env.",
-      error: String(err)
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
+  return Response.json({
+    success: true,
+    status: scheduled.status,
+    message: scheduled.status === "queued"
+      ? "Sync queued and will start when capacity is available"
+      : "Sync process triggered successfully",
+  }, { status: 202 });
 }
 
 export const action = withErrorHandler(actionHandler);
