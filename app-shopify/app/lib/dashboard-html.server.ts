@@ -13,6 +13,10 @@ import {
   DASHBOARD_SYNC_POLL_MAX_ATTEMPTS,
   DASHBOARD_TOAST_DURATION_MS,
   HISTORICAL_SYNC_LOOKBACK_YEARS,
+  MAX_QUANTITY_OWNED,
+  MAX_CERTIFICATE_NUMBER_LENGTH,
+  MAX_USER_GRADE_LENGTH,
+  MAX_USER_NOTES_LENGTH,
 } from "~/config/constants";
 
 /**
@@ -91,7 +95,7 @@ export function buildDashboardHtml(pathPrefix: string): string {
         <input id="dc-product-id" name="product_id" required placeholder="gid://shopify/Product/123456" />
       </label>
       <label class="dc-field">Quantity
-        <input id="dc-quantity" name="quantity_owned" type="number" min="1" max="999" required />
+        <input id="dc-quantity" name="quantity_owned" type="number" min="1" max="${MAX_QUANTITY_OWNED}" required />
       </label>
       <label class="dc-field">Purchase date
         <input id="dc-purchase-date" name="purchase_date" type="date" />
@@ -103,13 +107,13 @@ export function buildDashboardHtml(pathPrefix: string): string {
         <input id="dc-market-value" name="current_market_value" type="number" min="0" step="0.01" />
       </label>
       <label class="dc-field">Certificate number
-        <input id="dc-certificate" name="certificate_number" maxlength="50" />
+        <input id="dc-certificate" name="certificate_number" maxlength="${MAX_CERTIFICATE_NUMBER_LENGTH}" />
       </label>
       <label class="dc-field">Grade
-        <input id="dc-grade" name="user_grade" maxlength="200" />
+        <input id="dc-grade" name="user_grade" maxlength="${MAX_USER_GRADE_LENGTH}" />
       </label>
       <label class="dc-field dc-field-wide">Notes
-        <textarea id="dc-notes" name="user_notes" maxlength="500" rows="3"></textarea>
+        <textarea id="dc-notes" name="user_notes" maxlength="${MAX_USER_NOTES_LENGTH}" rows="3"></textarea>
       </label>
       <label class="dc-checkbox dc-field-wide">
         <input id="dc-in-wishlist" name="in_wishlist" type="checkbox" /> Add to wishlist
@@ -134,6 +138,7 @@ export function buildDashboardHtml(pathPrefix: string): string {
   var currentItems = [];
   var nextCursor = null;
   var formState = null;
+  var formOpener = null;
   var syncPollGeneration = 0;
 
   function byId(id) { return document.getElementById(id); }
@@ -295,7 +300,9 @@ export function buildDashboardHtml(pathPrefix: string): string {
         syncPollGeneration += 1;
         if (status === "completed") showToast("Sync completed");
         else if (status === "failed") showToast("Sync finished with errors. You can retry.", true);
-        loadCollection(null, false);
+        return loadCollection(null, false).catch(function (error) {
+          showToast("Sync finished, but collection refresh failed: " + error.message, true);
+        });
       }).catch(function (error) {
         syncPollGeneration += 1;
         byId("dc-sync-btn").disabled = false;
@@ -321,6 +328,7 @@ export function buildDashboardHtml(pathPrefix: string): string {
   }
   function setInput(id, value) { byId(id).value = value == null ? "" : String(value); }
   function openItemForm(item) {
+    formOpener = document.activeElement;
     formState = { itemId: item ? item.item_id : null, idempotencyKey: crypto.randomUUID(), submitting: false };
     byId("dc-modal-title").textContent = item ? "Edit Item" : "Add Item";
     byId("dc-product-field").hidden = Boolean(item);
@@ -335,11 +343,22 @@ export function buildDashboardHtml(pathPrefix: string): string {
     byId("dc-in-wishlist").checked = Boolean(item && item.in_wishlist);
     byId("dc-submit-item").disabled = false;
     byId("dc-item-modal").hidden = false;
+    byId(item ? "dc-quantity" : "dc-product-id").focus();
   }
   function closeItemForm() {
     if (formState && formState.submitting) return;
     byId("dc-item-modal").hidden = true;
     formState = null;
+    if (formOpener && formOpener.isConnected) formOpener.focus();
+  }
+  function handleDialogKey(event) {
+    if (!formState) return;
+    if (event.key === "Escape") { event.preventDefault(); closeItemForm(); return; }
+    if (event.key !== "Tab") return;
+    var first = byId(formState.itemId ? "dc-quantity" : "dc-product-id");
+    var last = byId(byId("dc-submit-item").disabled ? "dc-cancel-item" : "dc-submit-item");
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   }
   function submitItem(event) {
     event.preventDefault();
@@ -362,10 +381,12 @@ export function buildDashboardHtml(pathPrefix: string): string {
     var path = formState.itemId ? ("/" + encodeURIComponent(formState.itemId)) : "";
     var method = formState.itemId ? "PUT" : "POST";
     apiFetch(path, { method: method, body: JSON.stringify(payload) }).then(function () {
-      byId("dc-item-modal").hidden = true;
-      formState = null;
+      formState.submitting = false;
+      closeItemForm();
       showToast(method === "POST" ? "Item added" : "Item updated");
-      return Promise.all([loadStats(), loadCollection(null, false)]);
+      return Promise.all([loadStats(), loadCollection(null, false)]).catch(function (error) {
+        showToast("Item saved, but collection refresh failed: " + error.message, true);
+      });
     }).catch(function (error) {
       formState.submitting = false;
       submit.disabled = false;
@@ -391,7 +412,15 @@ export function buildDashboardHtml(pathPrefix: string): string {
   byId("dc-add-btn").addEventListener("click", function () { openItemForm(null); });
   byId("dc-cancel-item").addEventListener("click", closeItemForm);
   byId("dc-item-form").addEventListener("submit", submitItem);
-  byId("dc-load-more").addEventListener("click", function () { if (nextCursor) loadCollection(nextCursor, true); });
+  byId("dc-item-modal").addEventListener("keydown", handleDialogKey);
+  byId("dc-load-more").addEventListener("click", function () {
+    var button = byId("dc-load-more");
+    if (!nextCursor || button.disabled) return;
+    button.disabled = true;
+    loadCollection(nextCursor, true).catch(function (error) {
+      showToast("Could not load more items: " + error.message, true);
+    }).finally(function () { button.disabled = false; });
+  });
   loadData();
 })();
 </script>`;
@@ -399,7 +428,7 @@ export function buildDashboardHtml(pathPrefix: string): string {
 
 function normalizePathPrefix(pathPrefix: string): string {
   const candidate = pathPrefix || APP_PROXY_DEFAULT_PATH_PREFIX;
-  if (!candidate.startsWith("/") || candidate.includes("?") || candidate.includes("#")) {
+  if (!candidate.startsWith("/") || candidate.startsWith("//") || /[\\\s?#]/.test(candidate)) {
     return APP_PROXY_DEFAULT_PATH_PREFIX;
   }
   return candidate.replace(/\/+$/, "");

@@ -5,6 +5,7 @@
  * Syncs customer collection stats to Klaviyo segments/profiles.
  */
 
+import { KLAVIYO_MOCK_DELAY_MS } from "~/config/constants";
 import { logger } from "~/lib/logger.server";
 
 export interface KlaviyoCustomerProfile {
@@ -27,7 +28,7 @@ export async function syncCustomerToKlaviyo(
   try {
     // Make REST API call to Klaviyo
     // Mocking the delay and response
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, KLAVIYO_MOCK_DELAY_MS));
 
     logger.info("Mock Klaviyo API: Synced customer profile", {
       customerId,

@@ -16,13 +16,20 @@ export interface SchemaSetupUserError {
  */
 export function assertSchemaMutationSucceeded(
   operation: string,
-  userErrors: SchemaSetupUserError[]
+  userErrors: SchemaSetupUserError[] | undefined,
+  createdDefinition: object | null | undefined
 ): "created" | "already_exists" {
-  if (userErrors.length === 0) return "created";
+  if (!Array.isArray(userErrors)) {
+    throw new Error(`${operation} failed: missing mutation payload or userErrors`);
+  }
+  if (userErrors.length === 0) {
+    if (!createdDefinition) throw new Error(`${operation} failed: missing created definition`);
+    return "created";
+  }
 
   const alreadyExists = userErrors.every((error) => {
     const message = error.message.toLowerCase();
-    return message.includes("taken") || message.includes("already");
+    return error.code === "TAKEN" || message.includes("taken") || message.includes("already exists");
   });
   if (alreadyExists) return "already_exists";
 

@@ -25,12 +25,13 @@ import { assertSchemaMutationSucceeded } from "./schema-setup-errors";
 import {
   COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE,
   COLLECTION_ITEM_METAOBJECT_TYPE,
+  CUSTOMER_METAFIELD_NAMESPACE,
+  PRODUCT_METAFIELD_NAMESPACE,
+  SCHEMA_DEFINITION_PAGE_SIZE,
 } from "../app/config/constants";
 
 // ─── Namespace Configuration ──────────────────────────────────────────────────
 // Change to "downies_collection" / "downies_product_data" if there is a conflict
-const CUSTOMER_METAFIELD_NAMESPACE = "my_collection";
-const PRODUCT_METAFIELD_NAMESPACE = "collectible_data";
 const COLLECTION_ITEM_TYPE = COLLECTION_ITEM_METAOBJECT_TYPE;
 const DEDUP_LOCK_TYPE = COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE;
 
@@ -40,15 +41,15 @@ async function checkNamespaceCollision() {
 
   // Check existing metaobject definitions
   const result = await shopifyGraphQL(`
-    query GetMetaobjectDefinitions {
-      metaobjectDefinitions(first: 50) {
+    query GetMetaobjectDefinitions($first: Int!) {
+      metaobjectDefinitions(first: $first) {
         nodes {
           type
           name
         }
       }
     }
-  `);
+  `, { first: SCHEMA_DEFINITION_PAGE_SIZE });
 
   const data = result.data as {
     metaobjectDefinitions: { nodes: Array<{ type: string; name: string }> };
@@ -78,7 +79,7 @@ async function checkNamespaceCollision() {
   }
 
   console.log(
-    `ℹ️  If severe conflict occurs, change the namespace in this file to "downies_collection"/"downies_product_data".`
+    `ℹ️  If severe conflict occurs, change the namespace in app/config/constants.ts; existing data requires migration. Use to "downies_collection"/"downies_product_data".`
   );
 }
 
@@ -132,20 +133,13 @@ async function createCollectionItemDefinition() {
     };
   };
 
-  const { userErrors, metaobjectDefinition } = data.metaobjectDefinitionCreate;
-
-  if (userErrors.length > 0) {
-    const alreadyExists = userErrors.some(
-      (e) => e.message.toLowerCase().includes("taken") || e.message.toLowerCase().includes("already")
-    );
-    if (alreadyExists) {
-      console.log(`ℹ️  collection_item definition already exists — skipping this step.`);
-    } else {
-      console.error("❌ Error creating collection_item:", userErrors);
-    }
-  } else {
-    console.log(`✅ Created metaobject definition: ${metaobjectDefinition?.name}`);
-  }
+  const mutation = data?.metaobjectDefinitionCreate;
+  const status = assertSchemaMutationSucceeded(
+    "Create collection_item definition",
+    mutation?.userErrors,
+    mutation?.metaobjectDefinition
+  );
+  console.log(`collection_item definition: ${status}`);
 }
 
 // ─── Step 3: Create dedup_lock Metaobject Definition ─────────────────────────
@@ -184,20 +178,13 @@ async function createDedupLockDefinition() {
     };
   };
 
-  const { userErrors, metaobjectDefinition } = data.metaobjectDefinitionCreate;
-
-  if (userErrors.length > 0) {
-    const alreadyExists = userErrors.some(
-      (e) => e.message.toLowerCase().includes("taken") || e.message.toLowerCase().includes("already")
-    );
-    if (alreadyExists) {
-      console.log(`ℹ️  dedup_lock definition already exists — skipping this step.`);
-    } else {
-      console.error("❌ Error creating dedup_lock:", userErrors);
-    }
-  } else {
-    console.log(`✅ Created metaobject definition: ${metaobjectDefinition?.name}`);
-  }
+  const mutation = data?.metaobjectDefinitionCreate;
+  const status = assertSchemaMutationSucceeded(
+    "Create dedup_lock definition",
+    mutation?.userErrors,
+    mutation?.metaobjectDefinition
+  );
+  console.log(`dedup_lock definition: ${status}`);
 }
 
 // ─── Step 4: Create Customer Metafield Definitions ────────────────────────────
@@ -247,20 +234,13 @@ async function createCustomerMetafieldDefinitions() {
       };
     };
 
-    const { userErrors, createdDefinition } = data.metafieldDefinitionCreate;
-
-    if (userErrors.length > 0) {
-      const alreadyExists = userErrors.some(
-        (e) => e.message.toLowerCase().includes("taken") || e.message.toLowerCase().includes("already") || e.code === "TAKEN"
-      );
-      if (alreadyExists) {
-        console.log(`ℹ️  ${CUSTOMER_METAFIELD_NAMESPACE}.${def.key} already exists.`);
-      } else {
-        console.error(`❌ Error creating ${def.key}:`, userErrors);
-      }
-    } else {
-      console.log(`✅ Created: ${CUSTOMER_METAFIELD_NAMESPACE}.${createdDefinition?.key}`);
-    }
+    const mutation = data?.metafieldDefinitionCreate;
+    const status = assertSchemaMutationSucceeded(
+      `Create ${CUSTOMER_METAFIELD_NAMESPACE}.${def.key}`,
+      mutation?.userErrors,
+      mutation?.createdDefinition
+    );
+    console.log(`${CUSTOMER_METAFIELD_NAMESPACE}.${def.key}: ${status}`);
   }
 }
 
@@ -313,20 +293,13 @@ async function createProductMetafieldDefinitions() {
       };
     };
 
-    const { userErrors, createdDefinition } = data.metafieldDefinitionCreate;
-
-    if (userErrors.length > 0) {
-      const alreadyExists = userErrors.some(
-        (e) => e.message.toLowerCase().includes("taken") || e.code === "TAKEN"
-      );
-      if (alreadyExists) {
-        console.log(`ℹ️  ${PRODUCT_METAFIELD_NAMESPACE}.${def.key} already exists.`);
-      } else {
-        console.error(`❌ Error creating ${def.key}:`, userErrors);
-      }
-    } else {
-      console.log(`✅ Created: ${PRODUCT_METAFIELD_NAMESPACE}.${createdDefinition?.key}`);
-    }
+    const mutation = data?.metafieldDefinitionCreate;
+    const status = assertSchemaMutationSucceeded(
+      `Create ${PRODUCT_METAFIELD_NAMESPACE}.${def.key}`,
+      mutation?.userErrors,
+      mutation?.createdDefinition
+    );
+    console.log(`${PRODUCT_METAFIELD_NAMESPACE}.${def.key}: ${status}`);
   }
 }
 

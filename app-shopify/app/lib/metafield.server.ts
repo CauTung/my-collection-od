@@ -18,13 +18,16 @@ import { logger } from "./logger.server";
 import { mapSettledInChunks } from "./concurrency.server";
 import { extractShopifyNumericId } from "./shopify-id.server";
 import {
+  CUSTOMER_METAFIELD_NAMESPACE,
+  PRODUCT_METAFIELD_NAMESPACE,
+  PRODUCT_METAFIELD_FALLBACK_NAMESPACE,
   COLLECTIBLE_LOOKUP_BATCH_SIZE,
   COLLECTIBLE_LOOKUP_CONCURRENCY,
 } from "~/config/constants";
 
 // ─── Customer Metafields (Stats & Sync Status) ───────────────────────────────
 
-const CUSTOMER_NAMESPACE = "my_collection";
+
 
 export interface CustomerStats {
   total_items: number;
@@ -52,11 +55,11 @@ export async function getCustomerCollectionMetafields(
   const query = `
     query GetCustomerMetafields($id: ID!) {
       customer(id: $id) {
-        totalItems: metafield(namespace: "${CUSTOMER_NAMESPACE}", key: "total_items") { value }
-        totalValue: metafield(namespace: "${CUSTOMER_NAMESPACE}", key: "total_value") { value }
-        syncStatus: metafield(namespace: "${CUSTOMER_NAMESPACE}", key: "sync_status") { value }
-        syncProgress: metafield(namespace: "${CUSTOMER_NAMESPACE}", key: "sync_progress") { value }
-        lastUpdated: metafield(namespace: "${CUSTOMER_NAMESPACE}", key: "last_updated") { value }
+        totalItems: metafield(namespace: "${CUSTOMER_METAFIELD_NAMESPACE}", key: "total_items") { value }
+        totalValue: metafield(namespace: "${CUSTOMER_METAFIELD_NAMESPACE}", key: "total_value") { value }
+        syncStatus: metafield(namespace: "${CUSTOMER_METAFIELD_NAMESPACE}", key: "sync_status") { value }
+        syncProgress: metafield(namespace: "${CUSTOMER_METAFIELD_NAMESPACE}", key: "sync_progress") { value }
+        lastUpdated: metafield(namespace: "${CUSTOMER_METAFIELD_NAMESPACE}", key: "last_updated") { value }
       }
     }
   `;
@@ -117,21 +120,21 @@ export async function updateCustomerStatsMetafields(
     metafields: [
       {
         ownerId: customerId,
-        namespace: CUSTOMER_NAMESPACE,
+        namespace: CUSTOMER_METAFIELD_NAMESPACE,
         key: "total_items",
         value: stats.total_items.toString(),
         type: "number_integer",
       },
       {
         ownerId: customerId,
-        namespace: CUSTOMER_NAMESPACE,
+        namespace: CUSTOMER_METAFIELD_NAMESPACE,
         key: "total_value",
         value: stats.total_value.toString(),
         type: "number_decimal",
       },
       {
         ownerId: customerId,
-        namespace: CUSTOMER_NAMESPACE,
+        namespace: CUSTOMER_METAFIELD_NAMESPACE,
         key: "last_updated",
         value: new Date().toISOString(),
         type: "date_time",
@@ -163,7 +166,7 @@ export async function updateCustomerSyncStateMetafields(
   if (state.sync_status) {
     metafields.push({
       ownerId: customerId,
-      namespace: CUSTOMER_NAMESPACE,
+      namespace: CUSTOMER_METAFIELD_NAMESPACE,
       key: "sync_status",
       value: state.sync_status,
       type: "single_line_text_field",
@@ -173,7 +176,7 @@ export async function updateCustomerSyncStateMetafields(
   if (state.sync_progress !== undefined) {
     metafields.push({
       ownerId: customerId,
-      namespace: CUSTOMER_NAMESPACE,
+      namespace: CUSTOMER_METAFIELD_NAMESPACE,
       key: "sync_progress",
       value: state.sync_progress ? JSON.stringify(state.sync_progress) : "",
       type: "json",
@@ -195,9 +198,8 @@ export async function updateCustomerSyncStateMetafields(
 
 // ─── Product Metafields (Collectible Data) ───────────────────────────────────
 
-const PRODUCT_NAMESPACE = "collectible_data";
-// Fallback if Downies uses a different namespace structure
-const PRODUCT_NAMESPACE_FALLBACK = "downies_product_data";
+
+
 
 export interface CollectibleData {
   denomination?: string;
@@ -254,8 +256,8 @@ async function checkProductChunkHasCollectibleData(
     // Using both namespaces to be safe
     query += `
       ${alias}: product(id: $id_${index}) {
-        m1: metafield(namespace: "${PRODUCT_NAMESPACE}", key: "year_of_issue") { value }
-        m2: metafield(namespace: "${PRODUCT_NAMESPACE_FALLBACK}", key: "year_of_issue") { value }
+        m1: metafield(namespace: "${PRODUCT_METAFIELD_NAMESPACE}", key: "year_of_issue") { value }
+        m2: metafield(namespace: "${PRODUCT_METAFIELD_FALLBACK_NAMESPACE}", key: "year_of_issue") { value }
       }
     `;
     variables[`id_${index}`] = gid;

@@ -16,6 +16,7 @@ import {
   HISTORICAL_SYNC_MAX_ORDERS,
   HISTORICAL_SYNC_LOOKBACK_YEARS,
   BATCH_SYNC_CONCURRENCY,
+  ORDER_LINE_ITEM_PAGE_SIZE,
 } from "~/config/constants";
 import { shopifyGraphQL } from "./graphql-client.server";
 import { claimOrderSync } from "./dedup.server";
@@ -116,7 +117,7 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
           nodes {
             id
             createdAt
-            lineItems(first: 250) {
+            lineItems(first: ${ORDER_LINE_ITEM_PAGE_SIZE}) {
               nodes {
                 id
                 title
@@ -201,6 +202,7 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     const claimResults = await mapSettledInChunks(
       Array.from(coinsByOrder.entries()),
       BATCH_SYNC_CONCURRENCY,
+  ORDER_LINE_ITEM_PAGE_SIZE,
       async ([orderId, items]) => ({
         items,
         claimed: await claimOrderSync(customerId, orderId),

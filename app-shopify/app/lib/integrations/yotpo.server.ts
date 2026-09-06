@@ -6,7 +6,7 @@
  */
 
 import { logger } from "~/lib/logger.server";
-import { LOYALTY_SIGNUP_BONUS_POINTS } from "~/config/constants";
+import { LOYALTY_SIGNUP_BONUS_POINTS, YOTPO_MOCK_DELAY_MS } from "~/config/constants";
 
 /**
  * Awards loyalty points to a customer.
@@ -27,7 +27,7 @@ export async function awardLoyaltyPoints(
     
     // 2. Make REST API call to Yotpo
     // Mocking the delay and response
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, YOTPO_MOCK_DELAY_MS));
 
     logger.info("Mock Yotpo API: Awarded points to customer", {
       customerId,

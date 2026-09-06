@@ -16,6 +16,7 @@
  *   calculator must account for this to avoid throttling.
  */
 
+import { z } from "zod";
 import {
   GRAPHQL_RETRY_BASE_DELAY_MS,
   GRAPHQL_MAX_RETRY_ATTEMPTS,
@@ -85,7 +86,9 @@ async function executeShopifyGraphQL<T>(
   reqId: string
 ): Promise<ShopifyGraphQLResponse<T>> {
   const url = `https://${config.shopDomain}/admin/api/${SHOPIFY_ADMIN_API_VERSION}/graphql.json`;
-  const isMutation = /^\s*mutation\b/.test(query);
+  // GraphQL permits comments before the operation; only confirmed reads may retry.
+  const operation = query.replace(/#[^\r\n]*/g, "").trimStart();
+  const isReadOnly = /^(?:query\b|\{)/.test(operation);
 
   let response: globalThis.Response;
   try {
@@ -100,7 +103,7 @@ async function executeShopifyGraphQL<T>(
     });
   } catch (networkErr) {
     // A lost mutation response has an unknown commit state, so only queries are retried.
-    if (attempt < GRAPHQL_MAX_RETRY_ATTEMPTS && !isMutation) {
+    if (attempt < GRAPHQL_MAX_RETRY_ATTEMPTS && isReadOnly) {
       const delay = calculateDelay(attempt);
       logger.warn("GraphQL network error on query, retrying", { reqId, attempt, delay, error: String(networkErr) });
       await sleep(delay);
@@ -134,7 +137,26 @@ async function executeShopifyGraphQL<T>(
 
   let result: ShopifyGraphQLResponse<T>;
   try {
-    result = (await response.json()) as ShopifyGraphQLResponse<T>;
+    const body: unknown = await response.json();
+    const envelope = z.object({
+      data: z.record(z.string(), z.unknown()).nullable().optional(),
+      errors: z.array(z.object({
+        message: z.string(),
+        extensions: z.record(z.string(), z.unknown()).optional(),
+      }).passthrough()).optional(),
+      extensions: z.object({
+        cost: z.object({
+          requestedQueryCost: z.number().finite().nonnegative(),
+          actualQueryCost: z.number().finite().nonnegative().nullable(),
+          throttleStatus: z.object({
+            maximumAvailable: z.number().finite().nonnegative(),
+            currentlyAvailable: z.number().finite().nonnegative(),
+            restoreRate: z.number().finite(),
+          }),
+        }).optional(),
+      }).passthrough().optional(),
+    }).passthrough().parse(body);
+    result = envelope as ShopifyGraphQLResponse<T>;
   } catch (error) {
     throw new AppError(
       ErrorCode.GRAPHQL_ERROR,
@@ -142,7 +164,7 @@ async function executeShopifyGraphQL<T>(
     );
   }
 
-  const isThrottled = result.errors?.some(
+  const isThrottled = result.data == null && result.errors?.length && result.errors.every(
     (error) => error.extensions?.["code"] === "THROTTLED"
   );
 
@@ -170,8 +192,12 @@ async function executeShopifyGraphQL<T>(
     );
   }
 
+  if (result.data == null) {
+    throw new AppError(ErrorCode.GRAPHQL_ERROR, `Shopify Admin API returned no data (reqId ${reqId})`);
+  }
+
   const cost = result.extensions?.cost;
-  if (cost) {
+  if (cost && cost.actualQueryCost !== null) {
     const { actualQueryCost, throttleStatus } = cost;
     const { currentlyAvailable } = throttleStatus;
 

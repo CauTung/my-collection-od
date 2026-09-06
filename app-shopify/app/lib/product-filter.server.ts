@@ -15,55 +15,8 @@
  * - Shipping/fee lines have null product_id — always excluded.
  */
 
+import { COLLECTIBLE_PRODUCT_TYPES, ACCESSORY_PRODUCT_TYPES, ACCESSORY_KEYWORDS } from "~/config/constants";
 import type { ShopifyLineItem } from "~/types";
-
-/**
- * Numismatic product types that qualify as collectible coins.
- * Case-insensitive matching.
- */
-const COLLECTIBLE_PRODUCT_TYPES = new Set([
-  "coins",
-  "coin",
-  "medal",
-  "medals",
-  "bullion",
-  "commemorative",
-  "note",
-  "banknote",
-  "token",
-]);
-
-/**
- * Non-collectible accessory product types — always excluded.
- * Case-insensitive matching.
- */
-const ACCESSORY_PRODUCT_TYPES = new Set([
-  "case",
-  "coin case",
-  "cleaning kit",
-  "album",
-  "supplies",
-  "storage",
-  "capsule",
-  "frame",
-]);
-
-/**
- * Keywords in title or vendor that indicate an accessory or non-collectible line item.
- * Case-insensitive substring matching.
- */
-const ACCESSORY_KEYWORDS = [
-  "coin box",
-  "cleaning",
-  "postage",
-  "shipping",
-  "storage",
-  "handling",
-  "insurance",
-  "gift wrap",
-  "gift wrapping",
-  "packaging",
-];
 
 /**
  * Filter order line items to only collectible coins.

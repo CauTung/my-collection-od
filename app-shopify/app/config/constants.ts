@@ -29,6 +29,26 @@ export const COLLECTION_ITEM_METAOBJECT_TYPE = "collection_item";
 /** Shopify metaobject type used for atomic order event claims. */
 export const COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE = "collection_dedup_lock";
 
+/** Shared by schema provisioning and runtime customer stats/progress access. */
+export const CUSTOMER_METAFIELD_NAMESPACE = "my_collection";
+
+/** Shared by schema provisioning and runtime collectible classification. */
+export const PRODUCT_METAFIELD_NAMESPACE = "collectible_data";
+
+/** Existing alternate catalog namespace supported by collectible lookup. */
+export const PRODUCT_METAFIELD_FALLBACK_NAMESPACE = "downies_product_data";
+
+/** Product classification rules shared by webhook and historical sync. */
+export const COLLECTIBLE_PRODUCT_TYPES: ReadonlySet<string> = new Set([
+  "coins", "coin", "medal", "medals", "bullion", "commemorative", "note", "banknote", "token",
+]);
+export const ACCESSORY_PRODUCT_TYPES: ReadonlySet<string> = new Set([
+  "case", "coin case", "cleaning kit", "album", "supplies", "storage", "capsule", "frame",
+]);
+export const ACCESSORY_KEYWORDS = [
+  "coin box", "cleaning", "postage", "shipping", "storage", "handling", "insurance", "gift wrap", "gift wrapping", "packaging",
+] as const;
+
 /** Maximum quantity allowed for a single item in the collection. */
 export const MAX_QUANTITY_OWNED = 999;
 
@@ -110,6 +130,19 @@ export const COLLECTION_PAGE_SIZE = 50;
 
 /** Maximum page size used by Shopify Metaobject connection queries. */
 export const METAOBJECT_MAX_PAGE_SIZE = 250;
+
+/** Maximum nested line-item page currently requested by historical sync. */
+export const ORDER_LINE_ITEM_PAGE_SIZE = 250;
+
+/** Definition inventory page requested by the explicit setup script. */
+export const SCHEMA_DEFINITION_PAGE_SIZE = 50;
+
+/** Placeholder integration delays; these services do not call external APIs. */
+export const YOTPO_MOCK_DELAY_MS = 200;
+export const KLAVIYO_MOCK_DELAY_MS = 150;
+
+/** Toast duration used by the retained React component implementation. */
+export const REACT_TOAST_DURATION_MS = 5000;
 
 // ─── Storefront Dashboard ────────────────────────────────────────────────────
 /** Default storefront path used when Shopify omits the signed proxy prefix. */

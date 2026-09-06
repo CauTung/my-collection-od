@@ -16,7 +16,7 @@ import type { CustomerStats } from "./metafield.server";
 import { logger } from "./logger.server";
 import { awardLoyaltyPoints } from "./integrations/yotpo.server";
 import { syncCustomerToKlaviyo } from "./integrations/klaviyo.server";
-import { COLLECTION_ITEM_METAOBJECT_TYPE } from "~/config/constants";
+import { COLLECTION_ITEM_METAOBJECT_TYPE, METAOBJECT_MAX_PAGE_SIZE } from "~/config/constants";
 import { buildMetaobjectFieldFilter } from "./metaobject-search.server";
 
 interface StatsResponse {
@@ -51,7 +51,7 @@ export async function recalculateAndCacheStats(customerId: string): Promise<Cust
     while (hasNextPage) {
       const result: import("~/types").ShopifyGraphQLResponse<StatsResponse> = await shopifyGraphQL<StatsResponse>(
         `query CalculateStats($query: String!, $after: String) {
-          metaobjects(type: "${COLLECTION_ITEM_METAOBJECT_TYPE}", first: 250, after: $after, query: $query) {
+          metaobjects(type: "${COLLECTION_ITEM_METAOBJECT_TYPE}", first: ${METAOBJECT_MAX_PAGE_SIZE}, after: $after, query: $query) {
             nodes {
               fields { key value }
             }

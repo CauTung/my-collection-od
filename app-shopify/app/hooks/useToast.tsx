@@ -1,3 +1,4 @@
+import { REACT_TOAST_DURATION_MS } from "~/config/constants";
 import React, { createContext, useContext, useState, useCallback } from "react";
 import type { ReactNode } from "react";
 
@@ -25,10 +26,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, type, title, description }]);
     
-    // Auto remove after 5 seconds
+    // Keep the legacy component timeout configurable alongside the active dashboard.
     setTimeout(() => {
       removeToast(id);
-    }, 5000);
+    }, REACT_TOAST_DURATION_MS);
   }, []);
 
   const removeToast = useCallback((id: string) => {
