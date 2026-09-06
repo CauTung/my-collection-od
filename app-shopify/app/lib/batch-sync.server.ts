@@ -4,8 +4,8 @@
  * Async historical batch sync engine.
  *
  * Design decisions:
- * - Async model: Starts a background job and updates progress via Customer Metafield.
- *   This avoids Vercel/Shopify timeout limits for large histories (Spec 4.5 & 11).
+ * - Async model: Starts a registered background job and updates progress via Customer Metafield.
+ *   Vercel waitUntil preserves post-response work but does not extend the function timeout.
  * - Cross-customer limit: Uses queue.server.ts to enforce MAX_CONCURRENT_BATCH_SYNC_JOBS.
  * - Concurrency control: Processes items in chunks of BATCH_SYNC_CONCURRENCY using
  *   Promise.allSettled() to prevent N+1 sequential blocking.
@@ -57,7 +57,9 @@ interface AggregatedItem {
 
 /**
  * Triggers an async background sync job for a customer.
- * Returns immediately with the job status.
+ * @param customerId - Authenticated Shopify customer GID.
+ * @returns The current queue state and the promise for the full job lifecycle.
+ * @throws When the queued state cannot be persisted for a newly admitted job.
  */
 export async function triggerBatchSync(customerId: string): Promise<ScheduledJob> {
   const emptyProgress: SyncProgress = { processed: 0, total: 0, failed: 0 };
@@ -90,8 +92,8 @@ export async function triggerBatchSync(customerId: string): Promise<ScheduledJob
 }
 
 /**
- * The actual background processing logic.
- * MUST handle its own errors and release the job slot in finally block.
+ * Execute the historical sync and persist a terminal customer state.
+ * The queue owns slot release after this function settles.
  */
 async function runBatchSyncBackground(customerId: string): Promise<void> {
   const progress = { processed: 0, total: 0, failed: 0 };

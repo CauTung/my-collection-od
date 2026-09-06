@@ -207,7 +207,7 @@ Token phải lấy qua OAuth flow thủ công.
 
 ---
 
-## 🟡 8. Setup Metafields script phải chạy trước build
+## 🟡 8. Setup Metafields script phải chạy trước lần deploy đầu tiên
 
 ### Triệu chứng
 App chạy nhưng GraphQL queries fail vì thiếu Metaobject definitions.
@@ -216,11 +216,12 @@ App chạy nhưng GraphQL queries fail vì thiếu Metaobject definitions.
 Shopify Metaobject definitions (schema cho "0-Database") phải được tạo trước khi app sử dụng.
 
 ### Cách sửa
-Script `scripts/setup-metafields.ts` đã được tích hợp vào `build` script:
+Schema setup là bước operator riêng, không được gắn vào build thường:
 ```json
-"build": "tsx scripts/setup-metafields.ts && react-router build"
+"build": "react-router build",
+"setup:shopify-schema": "tsx scripts/setup-metafields.ts"
 ```
-Script kiểm tra namespace collision và skip nếu đã tồn tại.
+Chạy `npm run setup:shopify-schema` có giám sát sau khi xác nhận đúng store/token. Script kiểm tra namespace collision và skip nếu đã tồn tại.
 
 ### Lưu ý
 - Cần `SHOPIFY_ADMIN_ACCESS_TOKEN` và `SHOPIFY_SHOP_DOMAIN` trong env

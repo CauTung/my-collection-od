@@ -74,6 +74,12 @@ export const GRAPHQL_RETRY_BASE_DELAY_MS = 500;
 /** Maximum retry attempts when THROTTLED/429. */
 export const GRAPHQL_MAX_RETRY_ATTEMPTS = 5;
 
+/** Maximum proportional jitter applied to each retry delay. */
+export const GRAPHQL_RETRY_JITTER_RATIO = 0.3;
+
+/** Remaining-cost multiplier used before proactively waiting for bucket refill. */
+export const GRAPHQL_PROACTIVE_SAFETY_MULTIPLIER = 2;
+
 // ─── Batch Sync Concurrency ───────────────────────────────────────────────────
 /**
  * Number of concurrent orders processed in a single Batch Sync job per customer.
@@ -104,6 +110,19 @@ export const COLLECTION_PAGE_SIZE = 50;
 
 /** Maximum page size used by Shopify Metaobject connection queries. */
 export const METAOBJECT_MAX_PAGE_SIZE = 250;
+
+// ─── Storefront Dashboard ────────────────────────────────────────────────────
+/** Default storefront path used when Shopify omits the signed proxy prefix. */
+export const APP_PROXY_DEFAULT_PATH_PREFIX = "/apps/my-collection";
+
+/** Delay between sync-status polls in the storefront dashboard. */
+export const DASHBOARD_SYNC_POLL_INTERVAL_MS = 2000;
+
+/** Maximum status polls before the dashboard asks the customer to refresh. */
+export const DASHBOARD_SYNC_POLL_MAX_ATTEMPTS = 300;
+
+/** Lifetime of a storefront toast notification. */
+export const DASHBOARD_TOAST_DURATION_MS = 3000;
 
 // ─── Idempotency ─────────────────────────────────────────────────────────────
 /**

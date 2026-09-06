@@ -215,7 +215,7 @@ export interface CollectibleData {
 /**
  * Check which product GIDs have collectible data metafields.
  * Used by product-filter.server.ts to identify coins.
- * Uses alias batching to fetch multiple products in one query.
+ * Uses bounded alias-query chunks so lookup cost and concurrency remain predictable.
  */
 export async function checkProductsHaveCollectibleData(
   productGids: string[]

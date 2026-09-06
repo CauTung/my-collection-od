@@ -342,7 +342,7 @@
 ## AUD-029 — Queued Batch Jobs Were Never Executed
 
 - Severity: P1
-- Status: Fixed locally; independent review pending
+- Status: Fixed locally; independent review passed
 - Location: `app/lib/queue.server.ts`, `app/lib/batch-sync.server.ts`
 - Evidence: The previous limiter returned `false` at capacity and wrote `queued`, but retained no callback and had no drain path. The client retry assumption did not prove eventual execution.
 - Remediation: Added an instance-local FIFO scheduler with a completion promise, automatic drain on settlement, and duplicate-customer coalescing.
@@ -360,7 +360,7 @@
 ## AUD-031 — Sync Trigger Failure Was Disguised as HTTP 200
 
 - Severity: P1
-- Status: Fixed locally; independent review pending
+- Status: Fixed locally; independent review passed
 - Location: `app/routes/api.collection.sync.ts`
 - Evidence: A route-local catch returned `{success:false}` with HTTP 200 for scheduler or Admin state failures.
 - Impact: Frontend and monitoring could treat a failed trigger as a successful request.
@@ -370,7 +370,7 @@
 ## AUD-032 — Batch Claims Were Created Before Product Prerequisites
 
 - Severity: P1
-- Status: Fixed locally; item-level mutation recovery remains AUD-034
+- Status: Fixed locally; independent review passed; item-level mutation recovery remains AUD-034
 - Location: `app/lib/batch-sync.server.ts`
 - Evidence: Orders were claimed before the shared collectible metafield lookup; a transient lookup failure permanently skipped those orders on retry.
 - Remediation: Collect and classify line items first, then claim only orders containing valid collectible items using bounded concurrency.
@@ -420,18 +420,49 @@
 ## AUD-037 — Official Vercel React Router Preset Has a Major-Version Peer Conflict
 
 - Severity: P1 for deployment readiness
-- Status: Open for Batch E
+- Status: Fixed locally; independent review pending
 - Location: `react-router.config.ts`, package versions
 - Evidence: Project uses React Router 8.3.1, while the currently resolved `@vercel/react-router@1.3.6` package declares peer `@react-router/dev@7`; installation failed with `ERESOLVE` and was not forced.
 - Impact: The project still lacks the recommended Vercel preset/function-level configuration path.
 - Recommendation: Decide whether to align on React Router 7 or wait for/use a verified adapter supporting 8; do not bypass the peer contract with `--force`.
-- Owner: Batch E decision gate
+- Remediation: Aligned the complete React Router dependency family on 7.18.3, installed `@vercel/react-router` 1.3.6 without a peer bypass, enabled `vercelPreset()`, and enabled the v8 future flags to preserve the behavior expected by the previous v8 source.
+- Acceptance: `npm ls` reports one deduplicated React Router 7.18.3 tree and the Vercel-aware server bundle builds successfully.
 
 ## AUD-038 — Batch Concurrency Was Tested Against the Wrong Work Unit
 
 - Severity: P1
-- Status: Fixed locally; independent review pending
+- Status: Fixed locally; independent review passed
 - Location: `tests/unit/batch-sync-integration.test.ts`
 - Evidence: The earlier test measured product upserts, used only 50 records despite claiming a 200-order scale test, and asserted only `> 0` plus `<= 5`.
 - Remediation: The scale test now uses exactly 200 items and asserts exact concurrency 5; a separate controlled test proves order claims also reach exactly concurrency 5 after prerequisites.
 - Acceptance: Both exact assertions pass without timing-based sleeps.
+
+## AUD-039 — Normal Application Build Mutated Shopify Schema
+
+- Severity: P1 for deployment safety
+- Status: Fixed locally; independent review pending
+- Location: `app-shopify/package.json`, `app-shopify/scripts/setup-metafields.ts`
+- Evidence: `npm run build` executed `setup-metafields.ts` before compilation, so every Vercel/local build required an Admin token and could create or migrate definitions in the configured store.
+- Impact: A routine code build could change the wrong Shopify store and fail for reasons unrelated to compilation.
+- Remediation: `build` now performs compilation only. Schema provisioning is an explicit `npm run setup:shopify-schema` operator step.
+- Acceptance: Build output contains no setup-script/store calls; the explicit setup command remains documented and independently runnable.
+
+## AUD-040 — GraphQL Retry and Cost Behavior Had No Exact Regression Evidence
+
+- Severity: P1
+- Status: Fixed locally; independent review pending
+- Location: `app/lib/graphql-client.server.ts`, `tests/unit/graphql-client.test.ts`
+- Evidence: The client contained retry and proactive-throttle branches, but the suite only asserted URL and authentication headers.
+- Impact: Retry count, exponential delays, mutation replay protection, cumulative alias cost waits, and malformed responses could regress unnoticed.
+- Remediation: Centralized the setup script on the runtime client, made configuration resolve per public request, normalized invalid JSON to `GRAPHQL_ERROR`, and handled execution errors before proactive waiting. Added exact 429, THROTTLED, exhaustion, query/mutation network, cost-deficit, and parse-error tests.
+- Acceptance: Tests assert exact retry counts/delays, one mutation attempt after network failure, exact cost-derived wait, and the standard error contract.
+
+## AUD-041 — Vercel Adapter Dependency Carries Moderate Transitive Advisories
+
+- Severity: P2
+- Status: Open — upstream dependency gate
+- Location: `@vercel/react-router` → `@vercel/static-config` → `ajv`; `@react-router/serve` → Express stack
+- Evidence: `npm audit` reports six moderate advisories. The AJV path has no available fix; npm also did not update the Express/qs path during `npm audit fix` because the versions are selected transitively.
+- Impact: The adapter/build parser and local production server retain known denial-of-service/ReDoS advisories. The browser-facing Vercel function path must be assessed separately from the local `react-router-serve` dependency.
+- Recommendation: Monitor upstream releases and re-run audit during dependency updates; do not add unverified overrides that violate package ranges.
+- Acceptance: Upgrade to upstream-fixed dependency versions with all verification passing, or document an explicit owner risk acceptance based on deployed reachability.

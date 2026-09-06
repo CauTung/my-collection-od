@@ -19,26 +19,13 @@
  */
 
 import "dotenv/config";
-import { normalizeShopifyShopDomain } from "../app/lib/shopify-domain.server";
 import { buildMetaobjectFieldFilter } from "../app/lib/metaobject-search.server";
+import { shopifyGraphQL } from "../app/lib/graphql-client.server";
+import { assertSchemaMutationSucceeded } from "./schema-setup-errors";
 import {
   COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE,
   COLLECTION_ITEM_METAOBJECT_TYPE,
-  SHOPIFY_ADMIN_API_VERSION,
 } from "../app/config/constants";
-
-const SHOP_DOMAIN_VALUE = process.env.SHOPIFY_SHOP_DOMAIN;
-const ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
-
-if (!SHOP_DOMAIN_VALUE || !ACCESS_TOKEN) {
-  console.error(
-    "❌ Missing SHOPIFY_SHOP_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN in .env"
-  );
-  process.exit(1);
-}
-
-const SHOP_DOMAIN = normalizeShopifyShopDomain(SHOP_DOMAIN_VALUE);
-const ADMIN_API_URL = `https://${SHOP_DOMAIN}/admin/api/${SHOPIFY_ADMIN_API_VERSION}/graphql.json`;
 
 // ─── Namespace Configuration ──────────────────────────────────────────────────
 // Change to "downies_collection" / "downies_product_data" if there is a conflict
@@ -46,23 +33,6 @@ const CUSTOMER_METAFIELD_NAMESPACE = "my_collection";
 const PRODUCT_METAFIELD_NAMESPACE = "collectible_data";
 const COLLECTION_ITEM_TYPE = COLLECTION_ITEM_METAOBJECT_TYPE;
 const DEDUP_LOCK_TYPE = COLLECTION_DEDUP_LOCK_METAOBJECT_TYPE;
-
-async function shopifyGraphQL(query: string, variables?: Record<string, unknown>) {
-  const res = await fetch(ADMIN_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": ACCESS_TOKEN!, // Admin token, NOT App Secret
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-  }
-
-  return res.json() as Promise<{ data: unknown; errors?: unknown[] }>;
-}
 
 // ─── Step 1: Check Namespace Collision ────────────────────────────────────────
 async function checkNamespaceCollision() {
@@ -471,7 +441,7 @@ async function verifyMetaobjectFieldSearch(metaobjectType: string) {
 
 async function main() {
   console.log("🚀 Downies My Collection — Shopify Setup Script");
-  console.log(`📍 Shop: ${SHOP_DOMAIN}`);
+  console.log(`📍 Shop: ${process.env.SHOPIFY_SHOP_DOMAIN ?? "not configured"}`);
   console.log("─".repeat(60));
 
   try {

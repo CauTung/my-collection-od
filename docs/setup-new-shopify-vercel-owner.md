@@ -57,7 +57,7 @@ Set-Location <SOURCE_DIRECTORY>\app-shopify
 npm ci
 ```
 
-Không chạy `npm run build` ngay. Build hiện tại gọi `scripts/setup-metafields.ts` và sẽ ghi schema vào Shopify store được khai báo trong environment. Phải hoàn tất mục 3–6 trước.
+Có thể chạy `npm run build` để kiểm tra compile mà không ghi Shopify schema. Không chạy `npm run setup:shopify-schema` trước khi hoàn tất mục 3–6 và xác nhận đúng store/token.
 
 ## 3. Tạo Shopify app mới
 
@@ -427,7 +427,7 @@ Script cũng bật/migrate `adminFilterable` cho các field runtime dùng để 
 Chạy một lần có giám sát từ `app-shopify`:
 
 ```powershell
-npx tsx scripts/setup-metafields.ts
+npm run setup:shopify-schema
 ```
 
 Không chỉ tin dòng `Setup complete`. Kiểm tra trực tiếp trong Shopify Admin:
@@ -449,7 +449,7 @@ npm run lint
 npm run build
 ```
 
-`npm run build` hiện gọi setup script trước khi build, vì vậy nó cần token thật và có thể ghi vào Shopify store. Đây là nợ kỹ thuật cần tách trong audit.
+`npm run build` chỉ compile và không cần Admin token. Lệnh duy nhất được phép provision/migrate native schema là `npm run setup:shopify-schema`, phải chạy có giám sát trước deploy lần đầu hoặc khi schema thay đổi.
 
 ## 13. Deploy production chính thức
 
@@ -586,18 +586,18 @@ Các mục dưới đây được ghi nhận từ trạng thái source hiện t�
 2. Runtime phụ thuộc token tĩnh của một Legacy custom app riêng; chưa có token lifecycle cho Partner/custom-distribution app mới.
 3. `/api/auth/callback` được cấu hình nhưng route không tồn tại.
 4. GraphQL Admin API runtime/setup đã dùng chung constant `2026-07`; vẫn cần quy trình nâng version định kỳ.
-5. `scripts/setup-metafields.ts` vẫn gọi `fetch()` trực tiếp thay vì `shopifyGraphQL()` và còn namespace literals riêng.
-6. `npm run build` luôn chạy script tạo schema có side effect lên Shopify store.
+5. `scripts/setup-metafields.ts` đã dùng chung `shopifyGraphQL()`; namespace literals còn cần gom vào constants ở Batch G.
+6. `npm run build` đã tách khỏi schema setup; phải giữ `npm run setup:shopify-schema` là bước operator riêng.
 7. Quyền vẫn bị chia giữa Partner app và Legacy custom app; cần machine-readable environment/scope validation.
 8. App-specific webhook subscriptions đã có trong TOML nhưng chưa deploy/release và chưa verify delivery thật.
 9. `APP_HOST` có trong env contract nhưng chưa thấy được runtime sử dụng nhất quán.
 10. Dashboard Liquid/HTML/JavaScript đang bị duplicate giữa `home.tsx` và `app.my-collection.tsx`.
-11. Vercel build cảnh báo chưa phát hiện `vercelPreset()` cho React Router; cần audit deployment adapter/output chính thức.
+11. Official `vercelPreset()` đã được bật với React Router 7.18.3; cần verify deployment output trên Vercel staging.
 12. Namespace/type/config constants vẫn rải rác ngoài `app/config/constants.ts`.
 13. Webhook routes đã dùng shared authentication/parser và `withErrorHandler()`; partial item failure/dedup retry vẫn là residual risk cần quyết định.
 14. Cần rà lại toàn bộ hardcode numeric/string, GraphQL API versions, route paths và external URLs.
 15. Batch sync đã dùng `@vercel/functions` `waitUntil`, nhưng task vẫn bị giới hạn bởi maximum Function duration; phải benchmark 200-order sync trên đúng Vercel plan.
-16. Không ép cài `@vercel/react-router` bằng `--force`: bản resolve hiện tại yêu cầu React Router 7 trong khi source đang dùng React Router 8.3.1. Đây là decision gate của Batch E.
+16. Dependency tree đã đồng bộ React Router 7.18.3 với `@vercel/react-router` 1.3.6 mà không dùng `--force`; tiếp tục theo dõi adapter hỗ trợ Router 8 trước lần nâng major tiếp theo.
 
 Đây là danh sách đầu vào cho phiên audit kế tiếp. Không sửa rời rạc từng mục trước khi lập dependency map và test baseline, vì auth, scopes, token storage, webhook subscriptions và deployment config ảnh hưởng lẫn nhau.
 

@@ -103,15 +103,42 @@ Changes:
 - Registered completion with Vercel `waitUntil` and removed route-level HTTP 200 error masking.
 - Normalized authenticated customer GIDs to numeric Shopify order-filter values.
 - Moved collectible-data lookup before atomic order claims and bounded claim concurrency at five.
+- Bounded collectible prerequisite lookup to 25 aliases per query and five concurrent queries.
 - Mark jobs failed when isolated claim/item failures are recorded.
+- Reset progress at admission and count both order-claim and product-upsert work units consistently.
+- Made duplicate queued requests share the original admission result and added a failed-state fallback when syncing-state persistence fails.
 - Replaced sleep-based 50-item evidence with deterministic 200-item and exact order-claim concurrency tests.
 - Recorded item-level retry, 250-line-item pagination, Vercel maximum duration, and React Router adapter compatibility as open gates.
 
 Verification:
 
-- Typecheck: pass before independent review
-- Tests: 26 files and 119 tests pass before independent review
-- Lint: pass before independent review
-- Build: pending final verification
+- Typecheck: pass after round-one remediation
+- Tests: 27 files and 124 tests pass after round-one remediation
+- Lint: pass after round-one remediation
+- Build: pass; this was the final build before Batch E removed the schema side effect
 - Vercel post-response lifecycle: mock only; staging verification pending
+- Independent review round 1: six findings; queue admission, failed-state persistence, lookup bounds, and progress semantics remediated; frontend polling assigned to Batch F; documentation corrected
+- Independent review round 2: passed; no new P0/P1 backend implementation blocker
+
+## Batch E — GraphQL Resilience and Build Safety
+
+- Date: 2026-09-06
+- Findings: AUD-037, AUD-039 through AUD-041
+- Scope: Centralized Admin client, exact throttle evidence, side-effect-free build, and official Vercel adapter compatibility
+
+Changes:
+
+- Changed `npm run build` to compile only and introduced explicit `npm run setup:shopify-schema` provisioning.
+- Routed the setup script through the same `shopifyGraphQL()` client as runtime operations.
+- Added exact retry, backoff, mutation replay, cost wait, and invalid-response tests.
+- Aligned React Router packages on 7.18.3, installed the official Vercel preset without peer bypass, and enabled v8 future behavior flags.
+- Recorded the remaining moderate transitive dependency advisories as an upstream gate.
+
+Verification:
+
+- Typecheck: pending final verification
+- Tests: pending final verification
+- Lint: pending final verification
+- Build: preliminary pass with no Shopify schema activity; final verification pending
+- Dependency tree: one deduplicated React Router 7.18.3 tree; no invalid peer dependency
 - Independent review: pending

@@ -97,7 +97,7 @@ denomination, country_of_issue, material, year_of_issue, issuer, quality, grade,
 | `webhook.server.ts` | Shared webhook boundary: raw-body HMAC, signed shop binding, exact topic binding, then JSON parsing |
 | `error-handler.server.ts` | Converts App Proxy authentication failures to HTTP 401 and unexpected route failures to HTTP 500; routes do not swallow errors as HTTP 200 |
 | `session.server.ts` | Atomically verify App Proxy HMAC, bind signed `shop` to `SHOPIFY_SHOP_DOMAIN`, then extract the signed customer context through `authenticateAppProxyRequest()` |
-| `graphql-client.server.ts` | Wrapper duy nhất cho Admin GraphQL `2026-07` — retry/backoff/proactive throttle; version lấy từ constants |
+| `graphql-client.server.ts` | Wrapper duy nhất cho Admin GraphQL `2026-07` cho cả runtime và schema setup — retry/backoff/proactive throttle; version lấy từ constants |
 | `shopify-domain.server.ts` | Normalize `SHOPIFY_SHOP_DOMAIN` (hostname hoặc HTTPS URL) trước khi tạo Admin API URL |
 | `dedup.server.ts` | claimOrderSync() atomic — metaobjectCreate + catch userErrors |
 | `order.server.ts` | Resolve minimal Order customer context for refund payloads through Admin GraphQL |
@@ -113,6 +113,8 @@ denomination, country_of_issue, material, year_of_issue, issuer, quality, grade,
 | `shopify-id.server.ts` | Validate và tách numeric/safe segment từ Shopify GID cho order filters và handles |
 | `error-handler.server.ts` | AppError class + withErrorHandler() wrapper |
 | `logger.server.ts` | Structured JSON logger, auto-redact PII |
+
+Build thường (`npm run build`) chỉ compile React Router và dùng official Vercel preset; không gọi Shopify. Native schema chỉ được provision/migrate bằng lệnh operator có chủ đích `npm run setup:shopify-schema`.
 
 ---
 
@@ -158,12 +160,11 @@ POST /api/collection/sync → queue.scheduleJob(customerId)
     → registerBackgroundTask(completion) qua Vercel waitUntil
     → trả HTTP 202 kèm status syncing/queued
     → background: query orders bằng numeric customer_id (lookback + max 200)
-    → fetch collectible prerequisites trước khi tạo dedup claim
+    → fetch collectible prerequisites theo alias chunks 25, tối đa 5 queries đồng thời, trước khi tạo dedup claim
     → claim orders theo chunk concurrency 5
-    → filterCoinLineItems() → upsert products theo chunk concurrency 5
-    → GraphQL alias batch mutations (variables, cost-aware)
-    → update sync_progress Customer Metafield
-    → FE polling /api/collection.stats để xem tiến độ
+    → filterCoinLineItems() → upsert từng product bằng variables theo chunk concurrency 5
+    → update sync_progress Customer Metafield; processed/total đo tổng bước claim-order + upsert-product
+    → FE phải polling /api/collection.stats đến completed/failed (triển khai và kiểm thử ở Batch F)
 ```
 
 ### 5.3 Manual CRUD
