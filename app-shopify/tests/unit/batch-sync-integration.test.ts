@@ -67,6 +67,7 @@ describe("Batch Sync Concurrency Integration", () => {
       id: `gid://shopify/Order/${i}`,
       createdAt: "2026-01-01T00:00:00Z",
       lineItems: {
+        pageInfo: { hasNextPage: false, endCursor: null },
         nodes: [
           {
             id: `line-${i}`,
@@ -122,6 +123,7 @@ describe("Batch Sync Concurrency Integration", () => {
       id: `gid://shopify/Order/${index + 1}`,
       createdAt: "2026-01-01T00:00:00Z",
       lineItems: {
+        pageInfo: { hasNextPage: false, endCursor: null },
         nodes: [{
           id: `gid://shopify/LineItem/${index + 1}`,
           title: `Coin ${index + 1}`,

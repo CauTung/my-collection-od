@@ -35,3 +35,8 @@ These decisions are not silently accepted by the local remediation. No external 
 ## Final owner verification
 
 The project owner must independently run `npm run typecheck`, `npm test`, `npm run lint`, and `npm run build`, and inspect auth, dedup, and customer-isolation code. Record independent review and the real-store evidence before closing the audit.
+
+
+## Owner scope decision ? 2026-09-07
+
+The owner chose to keep the current MVP data model. Do not add contribution-ledger Metaobjects, external storage, or durable queue architecture to close the open gates without a later scope change. This decision does not establish that the associated production risks are acceptable.

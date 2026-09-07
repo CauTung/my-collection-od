@@ -6,6 +6,7 @@ import { scheduleJob } from "~/lib/queue.server";
 import { updateCustomerSyncStateMetafields } from "~/lib/metafield.server";
 import { checkProductsHaveCollectibleData } from "~/lib/metafield.server";
 import { shopifyGraphQL } from "~/lib/graphql-client.server";
+import { upsertCollectionItemByProduct } from "~/lib/metaobject.server";
 import { claimOrderSync } from "~/lib/dedup.server";
 
 vi.mock("~/lib/queue.server", () => ({ scheduleJob: vi.fn() }));
@@ -110,6 +111,7 @@ describe("triggerBatchSync", () => {
             id: "gid://shopify/Order/456",
             createdAt: "2026-01-01T00:00:00Z",
             lineItems: {
+        pageInfo: { hasNextPage: false, endCursor: null },
               nodes: [{
                 id: "gid://shopify/LineItem/1",
                 title: "Coin",
@@ -134,6 +136,71 @@ describe("triggerBatchSync", () => {
     expect(mockUpdateSyncState).toHaveBeenLastCalledWith(CUSTOMER_GID, {
       sync_status: "failed",
       sync_progress: { processed: 0, total: 0, failed: 0 },
+    });
+  });
+});
+
+function historicalOrder(id: number, count: number, hasNextPage: boolean, endCursor: string | null) {
+  return {
+    id: `gid://shopify/Order/${id}`, createdAt: "2026-01-01T00:00:00Z",
+    lineItems: {
+      pageInfo: { hasNextPage, endCursor },
+      nodes: Array.from({ length: count }, (_, index) => ({
+        id: `gid://shopify/LineItem/${index + 1}`, title: "Coin", quantity: 1,
+        variant: { price: "10.00" }, product: { id: `gid://shopify/Product/${id}`, productType: "coins" },
+      })),
+    },
+  };
+}
+
+async function runHistoricalSync() {
+  mockScheduleJob.mockImplementationOnce((_key, _markQueued, run) => {
+    const completion = run();
+    return Promise.resolve({ status: "syncing", completion, isNew: true });
+  });
+  const scheduled = await triggerBatchSync(CUSTOMER_GID);
+  await scheduled.completion;
+}
+
+describe("historical order line-item pagination", () => {
+  it("applies all 251 line items only after loading the continuation page", async () => {
+    mockGraphQL.mockResolvedValueOnce({ data: { orders: { nodes: [historicalOrder(1, 250, true, "cursor-250")] } } });
+    mockGraphQL.mockImplementationOnce(async () => {
+      expect(mockClaimOrder).toHaveBeenCalledTimes(0);
+      expect(upsertCollectionItemByProduct).toHaveBeenCalledTimes(0);
+      return { data: { order: historicalOrder(1, 1, false, null) } };
+    });
+    await runHistoricalSync();
+    expect(mockGraphQL).toHaveBeenCalledTimes(2);
+    expect(mockGraphQL.mock.calls[1]?.[1]).toEqual({ id: "gid://shopify/Order/1", first: 250, after: "cursor-250" });
+    expect(mockClaimOrder).toHaveBeenCalledExactlyOnceWith(CUSTOMER_GID, "gid://shopify/Order/1");
+    expect(upsertCollectionItemByProduct).toHaveBeenCalledExactlyOnceWith(CUSTOMER_GID, "gid://shopify/Product/1", {
+      quantity_owned: 251, purchase_date: "2026-01-01", purchase_price: 10,
+      source: "shopify_sync", external_order_id: "gid://shopify/Order/1",
+    });
+  });
+
+  it("does not claim or partially apply an order whose continuation fails while another order completes", async () => {
+    mockGraphQL.mockResolvedValueOnce({ data: { orders: { nodes: [historicalOrder(1, 250, true, "cursor-250"), historicalOrder(2, 1, false, null)] } } });
+    mockGraphQL.mockRejectedValueOnce(new Error("continuation failed"));
+    await runHistoricalSync();
+    expect(mockClaimOrder).toHaveBeenCalledExactlyOnceWith(CUSTOMER_GID, "gid://shopify/Order/2");
+    expect(upsertCollectionItemByProduct).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(upsertCollectionItemByProduct).mock.calls[0]?.[1]).toBe("gid://shopify/Product/2");
+    expect(mockUpdateSyncState).toHaveBeenLastCalledWith(CUSTOMER_GID, {
+      sync_status: "failed", sync_progress: { processed: 2, total: 3, failed: 1 },
+    });
+  });
+
+  it.each([null, "cursor-250"])("rejects missing or repeated continuation cursor %s before claiming", async (cursor) => {
+    mockGraphQL.mockResolvedValueOnce({ data: { orders: { nodes: [historicalOrder(1, 250, true, "cursor-250")] } } });
+    mockGraphQL.mockResolvedValueOnce({ data: { order: historicalOrder(1, 1, true, cursor) } });
+    await runHistoricalSync();
+    expect(mockGraphQL).toHaveBeenCalledTimes(2);
+    expect(mockClaimOrder).toHaveBeenCalledTimes(0);
+    expect(upsertCollectionItemByProduct).toHaveBeenCalledTimes(0);
+    expect(mockUpdateSyncState).toHaveBeenLastCalledWith(CUSTOMER_GID, {
+      sync_status: "failed", sync_progress: { processed: 0, total: 1, failed: 1 },
     });
   });
 });

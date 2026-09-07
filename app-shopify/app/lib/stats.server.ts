@@ -29,18 +29,17 @@ interface StatsResponse {
 /**
  * Recalculate stats by fetching all active items for a customer and summing them up.
  * Caches the result in Customer Metafields.
- * Handles pagination if the customer has more than 250 items.
+ * @param customerId - Owner of the collection to aggregate.
+ * @returns Validated totals after a successful cache write.
+ * @throws If reads fail, ownership or pagination is invalid, or values are malformed.
+ * Cache writes occur only after the entire collection has been validated.
  */
 export async function recalculateAndCacheStats(customerId: string): Promise<CustomerStats> {
   let hasNextPage = true;
   let cursor: string | null = null;
   let totalItemsCount = 0;
   let totalValueSum = 0;
-
-  // Fetch old stats to detect first-time collection creation for Yotpo
-  const { stats: oldStats } = await getCustomerCollectionMetafields(customerId).catch(() => ({ 
-    stats: { total_items: 0, total_value: 0 } 
-  }));
+  const seenCursors = new Set<string>();
 
   const queryStr = [
     buildMetaobjectFieldFilter("customer_id", customerId),
@@ -48,6 +47,8 @@ export async function recalculateAndCacheStats(customerId: string): Promise<Cust
   ].join(" AND ");
 
   try {
+    // A failed old-cache read cannot safely establish first-time loyalty eligibility.
+    const { stats: oldStats } = await getCustomerCollectionMetafields(customerId);
     while (hasNextPage) {
       const result: import("~/types").ShopifyGraphQLResponse<StatsResponse> = await shopifyGraphQL<StatsResponse>(
         `query CalculateStats($query: String!, $after: String) {
@@ -64,28 +65,45 @@ export async function recalculateAndCacheStats(customerId: string): Promise<Cust
         { query: queryStr, after: cursor }
       );
 
-      const nodes = result.data?.metaobjects?.nodes || [];
-      
-      for (const node of nodes) {
-        const fields = node.fields || [];
-        
-        // Find quantity
-        const qtyField = fields.find((f) => f.key === "quantity_owned");
-        const quantity = parseInt(qtyField?.value || "1", 10);
-        
-        // Find current market value (or purchase price as fallback for stats calculation)
-        const cmvField = fields.find((f) => f.key === "current_market_value");
-        const ppField = fields.find((f) => f.key === "purchase_price");
-        
-        const value = parseFloat(cmvField?.value || ppField?.value || "0");
-
-        totalItemsCount += quantity;
-        totalValueSum += (value * quantity);
+      const connection = result.data?.metaobjects;
+      if (!connection || !Array.isArray(connection.nodes) ||
+          typeof connection.pageInfo?.hasNextPage !== "boolean") {
+        throw new Error("Stats response is missing a valid collection page");
       }
+      for (const node of connection.nodes) {
+        if (!node || !Array.isArray(node.fields)) throw new Error("Stats item fields are missing");
+        const fields = new Map<string, string>();
+        for (const field of node.fields) {
+          if (!field || typeof field.key !== "string" || typeof field.value !== "string" || fields.has(field.key)) {
+            throw new Error("Stats item fields are malformed");
+          }
+          fields.set(field.key, field.value);
+        }
+        // Shopify search is not the only ownership boundary: validate every returned record.
+        if (fields.get("customer_id") !== customerId || fields.get("is_deleted") !== "false") {
+          throw new Error("Stats item ownership or active status is invalid");
+        }
+        const quantity = parseStatsNumber(fields.get("quantity_owned"));
+        if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error("Stats quantity is invalid");
+        const marketValue = fields.get("current_market_value");
+        const purchasePrice = fields.get("purchase_price");
+        const value = marketValue !== undefined ? parseStatsNumber(marketValue)
+          : purchasePrice !== undefined ? parseStatsNumber(purchasePrice) : 0;
+        totalItemsCount += quantity;
+        totalValueSum += value * quantity;
+        if (!Number.isSafeInteger(totalItemsCount) || !Number.isFinite(totalValueSum)) {
+          throw new Error("Stats totals exceed supported numeric range");
+        }
+      }
+      hasNextPage = connection.pageInfo.hasNextPage;
+      const nextCursor = connection.pageInfo.endCursor;
+      if (nextCursor !== null && typeof nextCursor !== "string") throw new Error("Stats cursor is malformed");
+      if (hasNextPage && (!nextCursor || seenCursors.has(nextCursor))) {
+        throw new Error("Stats pagination cursor did not advance");
+      }
+      if (nextCursor) seenCursors.add(nextCursor);
+      cursor = nextCursor;
 
-      const pageInfo = result.data?.metaobjects?.pageInfo;
-      hasNextPage = pageInfo?.hasNextPage || false;
-      cursor = pageInfo?.endCursor || null;
     }
 
     const stats: CustomerStats = {
@@ -120,4 +138,12 @@ export async function recalculateAndCacheStats(customerId: string): Promise<Cust
     // Rethrow to let caller decide whether to swallow or fail
     throw error;
   }
+}
+
+/** Parse a complete nonnegative decimal; partial parses must never poison cached totals. */
+function parseStatsNumber(value: string | undefined): number {
+  if (value === undefined || !/^\d+(?:\.\d+)?$/.test(value)) throw new Error("Stats numeric field is malformed");
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new Error("Stats numeric field is not finite");
+  return parsed;
 }

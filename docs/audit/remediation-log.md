@@ -180,3 +180,10 @@ All four commands ran from `app-shopify` using `npm.cmd` because PowerShell bloc
 - [Build](verification/2026-09-07-build.txt)
 
 The deprecated `envFile` warning remains non-blocking. No schema provisioning or external deployment was performed in this continuation. Tests use mocks: **C?N VERIFY TR?N DEV STORE TH?T TR??C KHI COI L? XONG**. The owner's own four-command verification and open design decisions are still required.
+
+
+## Follow-up scope decision ? 2026-09-07
+
+The owner explicitly chose to retain the current MVP data model rather than expand it with event/item contribution Metaobjects. AUD-017, AUD-018, AUD-024, AUD-028, and AUD-034 remain open where their resolution requires that architecture change. This is a scope decision, not acceptance of production data-loss/privacy risk. Continue only in-scope fixes such as historical line-item pagination and aggregate cache validation.
+
+Final E/F/G reconciliation: independent reviewer confirmed no new blocker in the reviewed changes and independently ran 4 relevant test files / 32 tests successfully. All results are local mock/VM evidence.

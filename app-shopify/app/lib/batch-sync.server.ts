@@ -30,22 +30,27 @@ import type { ShopifyLineItem } from "~/types";
 import { extractShopifyNumericId } from "./shopify-id.server";
 import { mapSettledInChunks } from "./concurrency.server";
 
+interface HistoricalLineItem {
+  id: string;
+  title: string;
+  quantity: number;
+  variant?: { price: string } | null;
+  product?: { id: string; productType: string } | null;
+}
+
+interface HistoricalLineItemConnection {
+  nodes: HistoricalLineItem[];
+  pageInfo: { hasNextPage: boolean; endCursor: string | null };
+}
+
+interface HistoricalOrder {
+  id: string;
+  createdAt: string;
+  lineItems: HistoricalLineItemConnection;
+}
+
 interface BatchSyncOrdersResponse {
-  orders?: {
-    nodes?: Array<{
-      id: string;
-      createdAt: string;
-      lineItems?: {
-        nodes?: Array<{
-          id: string;
-          title: string;
-          quantity: number;
-          variant?: { price: string };
-          product?: { id: string; productType: string };
-        }>;
-      };
-    }>;
-  };
+  orders?: { nodes?: HistoricalOrder[] };
 }
 
 interface AggregatedItem {
@@ -112,12 +117,13 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
 
     // In MVP, we fetch up to HISTORICAL_SYNC_MAX_ORDERS in one go. If more, we'd need pagination.
     const result = await shopifyGraphQL<BatchSyncOrdersResponse>(
-      `query GetHistoricalOrders($query: String!, $first: Int!) {
+      `query GetHistoricalOrders($query: String!, $first: Int!, $lineItemFirst: Int!) {
         orders(first: $first, query: $query, sortKey: CREATED_AT, reverse: true) {
           nodes {
             id
             createdAt
-            lineItems(first: ${ORDER_LINE_ITEM_PAGE_SIZE}) {
+            lineItems(first: $lineItemFirst) {
+              pageInfo { hasNextPage endCursor }
               nodes {
                 id
                 title
@@ -129,7 +135,7 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
           }
         }
       }`,
-      { query: queryStr, first: HISTORICAL_SYNC_MAX_ORDERS }
+      { query: queryStr, first: HISTORICAL_SYNC_MAX_ORDERS, lineItemFirst: ORDER_LINE_ITEM_PAGE_SIZE }
     );
 
     const orderConnection = result.data?.orders;
@@ -139,7 +145,7 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     const orders = orderConnection.nodes ?? [];
 
     if (orders.length === 0) {
-      await finishSync(customerId, progress, "completed");
+      await finishSync(customerId, progress, progress.failed > 0 ? "failed" : "completed");
       return;
     }
 
@@ -152,8 +158,24 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     };
     const rawLineItems: Array<SyncLineItem> = [];
 
-    for (const order of orders) {
-      const items = order.lineItems?.nodes || [];
+    // Complete each order before claiming it: a failed continuation must never
+    // permanently deduplicate an order whose trailing items were not applied.
+    const loadedOrders = await mapSettledInChunks(orders, BATCH_SYNC_CONCURRENCY, async (order) => ({
+      order,
+      items: await loadHistoricalOrderLineItems(order),
+    }));
+    let paginationFailures = 0;
+    for (const [index, loaded] of loadedOrders.entries()) {
+      if (loaded.status === "rejected") {
+        paginationFailures += 1;
+        progress.failed += 1;
+        progress.total += 1;
+        logger.error("Failed to load all historical order line items", {
+          customerId, orderId: orders[index].id, error: String(loaded.reason),
+        });
+        continue;
+      }
+      const { order, items } = loaded.value;
       for (const item of items) {
         if (item.product?.id) {
           rawLineItems.push({
@@ -176,7 +198,7 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     }
 
     if (rawLineItems.length === 0) {
-      await finishSync(customerId, progress, "completed");
+      await finishSync(customerId, progress, progress.failed > 0 ? "failed" : "completed");
       return;
     }
 
@@ -188,7 +210,7 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     const validCoins = filterCoinLineItems(rawLineItems, collectibleIds) as Array<SyncLineItem>;
 
     if (validCoins.length === 0) {
-      await finishSync(customerId, progress, "completed");
+      await finishSync(customerId, progress, progress.failed > 0 ? "failed" : "completed");
       return;
     }
 
@@ -222,7 +244,7 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     }
 
     if (claimedCoins.length === 0) {
-      progress.total = coinsByOrder.size;
+      progress.total = paginationFailures + coinsByOrder.size;
       await finishSync(customerId, progress, progress.failed > 0 ? "failed" : "completed");
       return;
     }
@@ -246,7 +268,7 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     }
 
     const itemsToUpsert = Array.from(aggregated.values());
-    progress.total = coinsByOrder.size + itemsToUpsert.length;
+    progress.total = paginationFailures + coinsByOrder.size + itemsToUpsert.length;
 
     // Update progress early
     await updateCustomerSyncStateMetafields(customerId, { sync_progress: progress });
@@ -308,4 +330,37 @@ async function finishSync(
     sync_progress: progress,
   });
   logger.info(`Batch sync ${status}`, { customerId, progress });
+}
+
+/** Load every page before returning an order; malformed or looping cursors throw. */
+async function loadHistoricalOrderLineItems(order: HistoricalOrder): Promise<HistoricalLineItem[]> {
+  let connection = order.lineItems;
+  const items: HistoricalLineItem[] = [];
+  const seenCursors = new Set<string>();
+  while (true) {
+    if (!connection || !Array.isArray(connection.nodes) ||
+        typeof connection.pageInfo?.hasNextPage !== "boolean") {
+      throw new Error(`Missing line-item connection for order ${order.id}`);
+    }
+    items.push(...connection.nodes);
+    if (!connection.pageInfo.hasNextPage) return items;
+    const cursor = connection.pageInfo.endCursor;
+    if (typeof cursor !== "string" || !cursor.trim() || seenCursors.has(cursor)) {
+      throw new Error(`Missing or repeated line-item cursor for order ${order.id}`);
+    }
+    seenCursors.add(cursor);
+    const result = await shopifyGraphQL<{ order: { lineItems: HistoricalLineItemConnection } | null }>(
+      `query GetHistoricalOrderLineItems($id: ID!, $first: Int!, $after: String!) {
+        order(id: $id) {
+          lineItems(first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes { id title quantity variant { price } product { id productType } }
+          }
+        }
+      }`,
+      { id: order.id, first: ORDER_LINE_ITEM_PAGE_SIZE, after: cursor }
+    );
+    if (!result.data?.order) throw new Error(`Missing historical order ${order.id}`);
+    connection = result.data.order.lineItems;
+  }
 }
