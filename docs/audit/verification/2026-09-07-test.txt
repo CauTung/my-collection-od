@@ -1,0 +1,17 @@
+
+> test
+> vitest run
+
+
+ RUN  v5.0.0 C:/Users/laptop/Documents/my-collection-od/app-shopify
+
+
+ Test Files  30 passed (30)
+      Tests  157 passed (157)
+   Start at  07:57:50
+   Duration  1.80s (transform 40%, import 29%, tests 25%, worker 7%)
+
+  Transform  transforming modules took 3.37s · 40% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

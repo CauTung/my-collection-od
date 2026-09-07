@@ -329,7 +329,7 @@ export function buildDashboardHtml(pathPrefix: string): string {
   function setInput(id, value) { byId(id).value = value == null ? "" : String(value); }
   function openItemForm(item) {
     formOpener = document.activeElement;
-    formState = { itemId: item ? item.item_id : null, idempotencyKey: crypto.randomUUID(), submitting: false };
+    formState = { itemId: item ? item.item_id : null, idempotencyKey: crypto.randomUUID(), submitting: false, originalItem: item };
     byId("dc-modal-title").textContent = item ? "Edit Item" : "Add Item";
     byId("dc-product-field").hidden = Boolean(item);
     setInput("dc-product-id", item && item.product_id);
@@ -363,6 +363,20 @@ export function buildDashboardHtml(pathPrefix: string): string {
   function submitItem(event) {
     event.preventDefault();
     if (!formState || formState.submitting) return;
+    // The current update contract omits empty values rather than deleting stored fields.
+    // Reject unsupported clearing before mutation so a successful save is never misleading.
+    var optionalFields = [
+      ["dc-purchase-date", "purchase_date"], ["dc-purchase-price", "purchase_price"],
+      ["dc-market-value", "current_market_value"], ["dc-certificate", "certificate_number"],
+      ["dc-grade", "user_grade"], ["dc-notes", "user_notes"]
+    ];
+    if (formState.originalItem && optionalFields.some(function (field) {
+      var original = formState.originalItem[field[1]];
+      return original != null && String(original) !== "" && byId(field[0]).value.trim() === "";
+    })) {
+      showToast("Clearing an existing optional field is not supported. Restore its value before saving.", true);
+      return;
+    }
     formState.submitting = true;
     var submit = byId("dc-submit-item");
     submit.disabled = true;

@@ -185,4 +185,34 @@ describe("shopifyGraphQL", () => {
     await expect(shopifyGraphQL("query GetInvalidResponse { shop { id } }"))
       .rejects.toMatchObject({ code: ErrorCode.GRAPHQL_ERROR });
   });
+  it.each([null, [], {}, { data: null }, { data: "invalid" }, { errors: {} }, { errors: [null] }])(
+    "rejects a malformed or empty response envelope %j without retrying",
+    async (body) => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(body));
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(shopifyGraphQL("query GetMalformed { shop { id } }"))
+        .rejects.toMatchObject({ code: ErrorCode.GRAPHQL_ERROR });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("does not retry a comment-prefixed mutation after an ambiguous network failure", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("connection reset"));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(shopifyGraphQL("# operation comment\n mutation UpdateItem { metafieldsSet(metafields: []) { userErrors { message } } }"))
+      .rejects.toMatchObject({ code: ErrorCode.GRAPHQL_ERROR });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replay a partially committed mutation containing a throttle error", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      data: { first: { id: "saved-1" }, second: null },
+      errors: [{ message: "Throttled", extensions: { code: "THROTTLED" } }],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(shopifyGraphQL("mutation UpdateItems { first: update { id } second: update { id } }"))
+      .rejects.toMatchObject({ code: ErrorCode.GRAPHQL_ERROR });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
 });

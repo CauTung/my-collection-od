@@ -5,9 +5,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["tests/**/*.test.ts"],
-    // Phase 1: no test files yet — will be available after Phase 2
-    // Set to true temporarily; will be set to false after all test files are created
-    passWithNoTests: true,
+    passWithNoTests: false,
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],

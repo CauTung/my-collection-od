@@ -213,7 +213,7 @@ export interface ShopifyGraphQLResponse<T = unknown> {
   extensions?: {
     cost?: {
       requestedQueryCost: number;
-      actualQueryCost: number;
+      actualQueryCost: number | null;
       throttleStatus: {
         maximumAvailable: number;
         currentlyAvailable: number;

@@ -202,7 +202,6 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
     const claimResults = await mapSettledInChunks(
       Array.from(coinsByOrder.entries()),
       BATCH_SYNC_CONCURRENCY,
-  ORDER_LINE_ITEM_PAGE_SIZE,
       async ([orderId, items]) => ({
         items,
         claimed: await claimOrderSync(customerId, orderId),

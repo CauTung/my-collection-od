@@ -466,3 +466,46 @@
 - Impact: The adapter/build parser and local production server retain known denial-of-service/ReDoS advisories. The browser-facing Vercel function path must be assessed separately from the local `react-router-serve` dependency.
 - Recommendation: Monitor upstream releases and re-run audit during dependency updates; do not add unverified overrides that violate package ranges.
 - Acceptance: Upgrade to upstream-fixed dependency versions with all verification passing, or document an explicit owner risk acceptance based on deployed reachability.
+
+
+## AUD-042 ? Successful Save Followed by Refresh Failure Crashed the Dashboard
+
+- Severity: P2
+- Status: Fixed locally; independent review reconciled; browser/store verification pending
+- Location: `app-shopify/app/lib/dashboard-html.server.ts`, `tests/unit/dashboard-html.test.ts`
+- Evidence: The save success path cleared formState; its catch then dereferenced formState when stats/list refresh failed.
+- Impact: A saved item produced a secondary exception and lost useful error feedback.
+- Reproduction: Successful POST followed by a rejected stats/list request.
+- Root cause: Mutation and refresh errors shared a catch that assumed an open form.
+- Remediation: Separate refresh failures, retain safe retry state for actual save failures, and catch pagination/poll refresh rejections.
+- Acceptance: Executable DOM tests assert one mutation under double-submit, retained retry UUID, and an explicit saved-but-refresh-failed message.
+- Owner: frontend remediation
+- Independent review: prior blocker confirmed resolved in second pass.
+
+## AUD-043 ? Editing Optional Fields Could Silently Ignore Clearing
+
+- Severity: P2
+- Status: Silent-success behavior fixed locally; native clearing remains unsupported
+- Location: `app-shopify/app/lib/dashboard-html.server.ts`
+- Evidence: Empty optional fields were omitted from requests, while the backend formatter also skipped empty values.
+- Impact: Customers could believe they removed a stored value while it remained unchanged.
+- Reproduction: Edit an item with notes, blank the notes, and submit.
+- Root cause: UI clearing intent had no backend request representation.
+- Remediation: Reject clearing existing optional values before mutation with an explicit explanation; do not invent native deletion semantics.
+- Acceptance: DOM test proves zero mutation requests and an explanatory message for attempted clearing.
+- Owner: frontend remediation; native clearing contract remains follow-up work
+- Independent review: visible limitation accepted as resolution of silent data-loss feedback, not as full clearing support.
+
+## AUD-044 ? Setup and Runtime Configuration Could Drift During Handover
+
+- Severity: P2
+- Status: Fixed locally for shared namespaces/classification/limits and handover guidance
+- Location: `app-shopify/app/config/constants.ts`, `README.md`, `app-shopify/.env.example`, `app-shopify/vitest.config.ts`
+- Evidence: Setup and runtime declared namespaces separately; README was the generic React Router template; integration placeholders claimed credentials enabled real integrations; empty test discovery passed.
+- Impact: Owner setup could provision/read different namespaces or incorrectly infer working integrations or verified tests.
+- Reproduction: Compare setup/runtime namespace declarations and environment reads to the old template guidance.
+- Root cause: Duplicated configuration and scaffold documentation persisted after runtime implementation.
+- Remediation: Shared constants, accurate runtime/operator distinctions, explicit mock limitations, and fail-on-empty-test discovery.
+- Acceptance: Four checks pass, existing classification/concurrency tests retain exact behavior; independent review verifies documentation against imports/environment reads.
+- Owner: configuration/handover remediation
+- Independent review: stale passWithNoTests allowance identified and removed before final checks.

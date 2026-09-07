@@ -1,0 +1,46 @@
+
+> build
+> react-router build
+
+The `envFile` option is deprecated, please use `envDir: false` instead.
+The `envFile` option is deprecated, please use `envDir: false` instead.
+The `envFile` option is deprecated, please use `envDir: false` instead.
+Using Vite Environment API (experimental)
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 50 modules transformed.
+rendering chunks...
+computing gzip size...
+build/client/.vite/manifest.json                                       4.46 kB │ gzip:  0.58 kB
+build/client/assets/root-BbVdbTG6.css                                 19.16 kB │ gzip:  5.17 kB
+build/client/assets/api.collection-BvRk9kiK.js                         0.00 kB │ gzip:  0.02 kB
+build/client/assets/api.collection._item_id-BvRk9kiK.js                0.00 kB │ gzip:  0.02 kB
+build/client/assets/api.collection._item_id.wishlist-BvRk9kiK.js       0.00 kB │ gzip:  0.02 kB
+build/client/assets/api.collection.stats-BvRk9kiK.js                   0.00 kB │ gzip:  0.02 kB
+build/client/assets/api.collection.sync-BvRk9kiK.js                    0.00 kB │ gzip:  0.02 kB
+build/client/assets/api.webhooks.customers-data-request-BvRk9kiK.js    0.00 kB │ gzip:  0.02 kB
+build/client/assets/api.webhooks.customers-redact-BvRk9kiK.js          0.00 kB │ gzip:  0.02 kB
+build/client/assets/api.webhooks.orders-cancelled-BvRk9kiK.js          0.00 kB │ gzip:  0.02 kB
+build/client/assets/api.webhooks.orders-paid-BvRk9kiK.js               0.00 kB │ gzip:  0.02 kB
+build/client/assets/api.webhooks.refunds-create-BvRk9kiK.js            0.00 kB │ gzip:  0.02 kB
+build/client/assets/api.webhooks.shop-redact-BvRk9kiK.js               0.00 kB │ gzip:  0.02 kB
+build/client/assets/app.my-collection-BvRk9kiK.js                      0.00 kB │ gzip:  0.02 kB
+build/client/assets/home-BvRk9kiK.js                                   0.00 kB │ gzip:  0.02 kB
+build/client/assets/root-m0SYesfK.js                                   1.14 kB │ gzip:  0.61 kB
+build/client/assets/jsx-runtime-DbNmEcut.js                          129.81 kB │ gzip: 42.84 kB
+build/client/assets/entry.client-rcXWMuJu.js                         185.98 kB │ gzip: 58.67 kB
+
+✓ built in 705ms
+vite v8.2.2 building ssrBundle_nodejs_eyJydW50aW1lIjoibm9kZWpzIn0 environment for production...
+transforming...
+✓ 48 modules transformed.
+rendering chunks...
+
+✓ 1 asset cleaned from React Router server build.
+build\server\nodejs_eyJydW50aW1lIjoibm9kZWpzIn0\assets\server-build-BbVdbTG6.css
+
+computing gzip size...
+build/server/nodejs_eyJydW50aW1lIjoibm9kZWpzIn0/.vite/manifest.json    0.22 kB │ gzip:  0.15 kB
+build/server/nodejs_eyJydW50aW1lIjoibm9kZWpzIn0/index.js             142.05 kB │ gzip: 35.00 kB
+
+✓ built in 352ms

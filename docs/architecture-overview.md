@@ -234,3 +234,21 @@ Queue hiện giữ FIFO callback và tự start queued job khi slot được rel
 | 2026-09-05 | Corrected Metaobject field-search syntax and migrated searched fields to `adminFilterable` | Prevent mocked tests from hiding broken customer/product filters and incomplete privacy erasure on Shopify |
 | 2026-09-06 | Replaced batch counter-only queue with FIFO lifecycle scheduling, duplicate-customer coalescing, and Vercel `waitUntil` registration | Ensure queued jobs actually start and attach background work to the serverless invocation |
 | 2026-09-06 | Deferred batch order claims until collectible lookup succeeds and normalized order customer search to numeric ID | Avoid permanent claims on prerequisite failure and make Shopify order search contract valid |
+
+
+## 9. Audit E/F/G implementation boundaries
+
+The active storefront renderer is `app/lib/dashboard-html.server.ts`, shared by the root and App Proxy page routes. It renders collection values through DOM `textContent`, serializes server values for inline-script context, and sends requests through the same-origin Shopify proxy path. Shopify signs each forwarded request; the browser does not copy the initial signed query string. Add/Edit uses a fresh UUID per form opening and disables submission immediately. Queued/running sync states poll cached metafields until a terminal state or a bounded polling limit. Dialog focus, keyboard handling, and separate mutation/refresh errors belong to this renderer. Existing React components remain reference implementations, not the active route UI.
+
+The Admin GraphQL client validates response envelopes before returning data. Missing/null top-level data without execution errors is an infrastructure error. HTTP 429 and wholly rejected THROTTLED responses retry within the configured limit; ambiguous mutation network failures and partial-data execution errors do not replay writes. Schema provisioning uses the shared client and rejects unexpected or mixed definition errors and missing success nodes instead of reporting successful setup.
+
+`config/constants.ts` now owns customer/product namespaces (including the catalog fallback), product classification lists, stats and line-item page sizes, schema inventory size, and placeholder integration delays. Runtime reads and explicit setup import the same namespace definitions. Namespace changes do not migrate existing records automatically. Nested historical line-item pagination beyond the configured first page remains AUD-035.
+
+Yotpo/Klaviyo still log mock outcomes only; their environment placeholders are not runtime credentials. `SHOPIFY_CLIENT_ID` and `APP_HOST` are operator references and are not consumed by the application. Actual proxy/callback configuration lives in Shopify configuration. Required runtime values are `SHOPIFY_APP_SECRET`, `SHOPIFY_ADMIN_ACCESS_TOKEN`, and `SHOPIFY_SHOP_DOMAIN`. Build performs no schema mutation. Tests now fail when no test files are discovered.
+
+| Date | Change | Reason |
+|---|---|---|
+| 2026-09-07 | Completed GraphQL/setup failure classification and shared storefront error handling | Prevent false successful setup, unsafe replay, and lost UI errors |
+| 2026-09-07 | Centralized shared namespace/classification configuration and replaced template README/env guidance | Prevent setup/runtime drift and inaccurate owner handover |
+
+See `docs/audit/staging-verification.md` for remaining Shopify, serverless, privacy, and human verification gates. No live schema migration or deployment is implied by local verification.

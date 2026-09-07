@@ -136,9 +136,47 @@ Changes:
 
 Verification:
 
-- Typecheck: pending final verification
-- Tests: pending final verification
-- Lint: pending final verification
-- Build: preliminary pass with no Shopify schema activity; final verification pending
+- Typecheck: exit 0 on 2026-09-07
+- Tests: 30 files / 157 tests passed on 2026-09-07
+- Lint: exit 0 on 2026-09-07
+- Build: exit 0 on 2026-09-07; no schema provisioning executed
 - Dependency tree: one deduplicated React Router 7.18.3 tree; no invalid peer dependency
-- Independent review: pending
+- Independent review: first pass found setup-error swallowing and missing response-envelope validation; second pass confirmed both resolved. Final targeted reconciliation recorded below.
+
+
+## Batch F ? Frontend Safety and Consolidation
+
+- Date: 2026-09-07
+- Findings: AUD-042, AUD-043
+- Scope: Shared existing App Proxy renderer, request failure handling, keyboard interaction, and behavioral tests.
+- Both page entry routes use the same renderer. Server inline values are escaped; collection data uses DOM text properties.
+- Restrict API prefixes to same-origin paths; form limits use shared constants.
+- Preserve per-form idempotency UUID on retry and disable duplicate submit immediately.
+- Separate successful mutation from failed collection refresh; report pagination/polling refresh errors and suppress concurrent load-more.
+- Add initial/restored dialog focus, focus wrapping, and Escape handling.
+- Clearing populated optional fields is explicitly rejected before sending a mutation because the current backend does not support that clearing contract. This limitation is visible, not silently accepted.
+- Eight executable DOM-harness tests cover the above behavior; the harness is not a real browser.
+- Independent review: first-pass crash/clearing findings resolved through error isolation and explicit contract feedback; second static pass found no additional concrete blocker. Real storefront QA remains pending.
+
+## Batch G ? Configuration and Handover Cleanup
+
+- Date: 2026-09-07
+- Findings: AUD-044
+- Scope: Shared configuration, truthful handover, and test discovery safety.
+- Schema/runtime use the same namespace constants. Classification rules, page sizes, and placeholder delays are centralized.
+- Corrected an accidental extra page-size argument introduced during the earlier constants move; exact batch concurrency regressions pass.
+- Replaced the generic README and misleading environment comments. Integration keys do not enable the mock integrations; Client ID/APP_HOST are operator references.
+- Updated architecture and created the staging checklist. Existing React components and mock integrations remain explicitly documented; no unapproved integration was implemented.
+- Empty test discovery now fails. Independent review caught the stale allowance and it was removed before final verification.
+- Upstream dependency and architecture/external gates remain open; cleanup is not risk acceptance.
+
+## Combined Final Local Verification ? 2026-09-07
+
+All four commands ran from `app-shopify` using `npm.cmd` because PowerShell blocks `npm.ps1`. Each exited 0. The full outputs are retained verbatim:
+
+- [Typecheck](verification/2026-09-07-typecheck.txt)
+- [Tests: 30 files / 157 tests](verification/2026-09-07-test.txt)
+- [Lint](verification/2026-09-07-lint.txt)
+- [Build](verification/2026-09-07-build.txt)
+
+The deprecated `envFile` warning remains non-blocking. No schema provisioning or external deployment was performed in this continuation. Tests use mocks: **C?N VERIFY TR?N DEV STORE TH?T TR??C KHI COI L? XONG**. The owner's own four-command verification and open design decisions are still required.
