@@ -423,7 +423,7 @@
 ## AUD-037 — Official Vercel React Router Preset Has a Major-Version Peer Conflict
 
 - Severity: P1 for deployment readiness
-- Status: Fixed locally; independent review pending
+- Status: Fixed locally; independent review reconciled in Batch E and final E/F/G review; deployed verification pending
 - Location: `react-router.config.ts`, package versions
 - Evidence: Project uses React Router 8.3.1, while the currently resolved `@vercel/react-router@1.3.6` package declares peer `@react-router/dev@7`; installation failed with `ERESOLVE` and was not forced.
 - Impact: The project still lacks the recommended Vercel preset/function-level configuration path.
@@ -443,7 +443,7 @@
 ## AUD-039 — Normal Application Build Mutated Shopify Schema
 
 - Severity: P1 for deployment safety
-- Status: Fixed locally; independent review pending
+- Status: Fixed locally; independent review reconciled in Batch E and final E/F/G review
 - Location: `app-shopify/package.json`, `app-shopify/scripts/setup-metafields.ts`
 - Evidence: `npm run build` executed `setup-metafields.ts` before compilation, so every Vercel/local build required an Admin token and could create or migrate definitions in the configured store.
 - Impact: A routine code build could change the wrong Shopify store and fail for reasons unrelated to compilation.
@@ -453,7 +453,7 @@
 ## AUD-040 — GraphQL Retry and Cost Behavior Had No Exact Regression Evidence
 
 - Severity: P1
-- Status: Fixed locally; independent review pending
+- Status: Fixed locally; independent review reconciled in Batch E and final E/F/G review; real-store throttle verification pending
 - Location: `app/lib/graphql-client.server.ts`, `tests/unit/graphql-client.test.ts`
 - Evidence: The client contained retry and proactive-throttle branches, but the suite only asserted URL and authentication headers.
 - Impact: Retry count, exponential delays, mutation replay protection, cumulative alias cost waits, and malformed responses could regress unnoticed.

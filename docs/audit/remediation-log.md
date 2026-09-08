@@ -221,4 +221,25 @@ Verification:
   - `batch-sync.server.ts`: calls `recalculateAndCacheStats(customerId)` on retry if all orders were previously claimed and 0 failures occurred.
   - `constants.ts`: added `ORDER_LINE_ITEM_MAX_PAGES = 40` safety bound, enforced in `loadHistoricalOrderLineItems`.
   - `batch-sync.test.ts`: added exact boundary test for 250 items with `hasNextPage: false` (asserting 1 query and 0 continuation).
-  - Reviewer confirmed: **0 P0, 0 P1, 0 P2 blockers remaining.**
+  - Reviewer confirmed: **0 P0, 0 P1, 0 P2 blockers remaining in the reviewed Batch H changes.** Previously recorded architecture and staging gates remain open.
+
+## Audit status reconciliation — 2026-09-08
+
+- Reconciled AUD-037, AUD-039, and AUD-040 review statuses with the existing Batch E and final E/F/G review records above.
+- Removed historical line-item pagination from pending implementation decisions; retained real-store boundary, continuation-failure, and page-limit verification after Batch H.
+- Clarified that the Batch H review conclusion applies to its reviewed changes, not all outstanding audit findings.
+- Documentation-only update; no new test execution, dependency audit, deployment, or staging evidence is claimed. Existing verification outputs retain their original dates.
+
+## Final local patch status — 2026-09-08
+
+- All in-scope local implementation patches are complete and have passed the recorded independent review.
+- No additional batch-sync code patch is pending. Remaining work is external verification or an explicit architecture/owner decision:
+  - real Shopify/Vercel staging scenarios;
+  - AUD-034/AUD-017 partial-failure recovery design;
+  - AUD-018/AUD-024 refund/cancellation attribution design;
+  - AUD-028 privacy late-event suppression policy;
+  - AUD-019 operational data-request fulfilment;
+  - AUD-026 maximum privacy-erasure duration measurement;
+  - AUD-036 Vercel maximum-duration measurement or durable continuation decision;
+  - AUD-041 dependency advisory review/owner risk decision.
+- This note does not claim that staging has been run, deployment is complete, or open architecture risks are accepted.
