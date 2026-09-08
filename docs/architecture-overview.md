@@ -247,6 +247,8 @@ The Admin GraphQL client validates response envelopes before returning data. Mis
 
 `config/constants.ts` now owns customer/product namespaces (including the catalog fallback), product classification lists, stats and line-item page sizes, schema inventory size, and placeholder integration delays. Runtime reads and explicit setup import the same namespace definitions. Namespace changes do not migrate existing records automatically. Historical line-item pagination beyond 250 items per order (AUD-035) is implemented in `loadHistoricalOrderLineItems()`, and collection stats calculation (`recalculateAndCacheStats`) enforces strict customer ownership, active status, decimal parsing, and cursor pagination loop checks before updating cached metafields.
 
+Manual collection entry accepts a numeric Shopify product ID in the customer-facing form and normalizes it to the canonical `gid://shopify/Product/{id}` representation at validation time. Existing canonical product GIDs remain accepted for compatibility; webhook and batch-sync paths continue to use canonical GIDs internally.
+
 Yotpo/Klaviyo still log mock outcomes only; their environment placeholders are not runtime credentials. `SHOPIFY_CLIENT_ID` and `APP_HOST` are operator references and are not consumed by the application. Actual proxy/callback configuration lives in Shopify configuration. Required runtime values are `SHOPIFY_APP_SECRET`, `SHOPIFY_ADMIN_ACCESS_TOKEN`, and `SHOPIFY_SHOP_DOMAIN`. Build performs no schema mutation. Tests now fail when no test files are discovered.
 
 | Date | Change | Reason |

@@ -15,6 +15,14 @@ export function extractShopifyNumericId(gid: string): string {
   return numericId;
 }
 
+/** Normalize a product ID entered by a customer into Shopify's canonical product GID. */
+export function normalizeShopifyProductId(value: string): string {
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return `gid://shopify/Product/${trimmed}`;
+  if (/^gid:\/\/shopify\/Product\/\d+$/.test(trimmed)) return trimmed;
+  throw new Error("Invalid Shopify product ID");
+}
+
 /** Return a safe final ID/event segment for normalized Metaobject handles. */
 export function extractShopifyIdSegment(identifier: string): string {
   const segment = identifier.split("/").at(-1);

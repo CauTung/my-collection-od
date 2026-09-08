@@ -18,12 +18,18 @@ import {
   MAX_USER_GRADE_LENGTH,
   MAX_USER_NOTES_LENGTH,
 } from "~/config/constants";
+import { normalizeShopifyProductId } from "~/lib/shopify-id.server";
 
 // ─── Shared Field Schemas ────────────────────────────────────────────────────
 
-const shopifyGidSchema = z
-  .string()
-  .startsWith("gid://shopify/", "Must be a Shopify GID (gid://shopify/...)");
+const shopifyProductIdSchema = z.string().trim().transform((value, context) => {
+  try {
+    return normalizeShopifyProductId(value);
+  } catch {
+    context.addIssue({ code: "custom", message: "Enter the numeric Shopify product ID" });
+    return z.NEVER;
+  }
+});
 
 const quantitySchema = z
   .number()
@@ -46,7 +52,7 @@ const idempotencyKeySchema = z
 
 export const AddItemSchema = z.object({
   idempotency_key: idempotencyKeySchema,
-  product_id: shopifyGidSchema,
+  product_id: shopifyProductIdSchema,
   sku_code: z.string().optional(),
   quantity_owned: quantitySchema.default(1),
   purchase_date: dateStringSchema,

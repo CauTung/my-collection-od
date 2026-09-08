@@ -91,8 +91,9 @@ export function buildDashboardHtml(pathPrefix: string): string {
   <form class="dc-dialog" id="dc-item-form">
     <h2 id="dc-modal-title">Add Item</h2>
     <div class="dc-form-grid">
-      <label class="dc-field dc-field-wide" id="dc-product-field">Shopify Product GID
-        <input id="dc-product-id" name="product_id" required placeholder="gid://shopify/Product/123456" />
+      <label class="dc-field dc-field-wide" id="dc-product-field">Product ID
+        <input id="dc-product-id" name="product_id" required inputmode="numeric" pattern="[0-9]+" placeholder="e.g. 123456" aria-describedby="dc-product-help" />
+        <span class="dc-help" id="dc-product-help">Use the product number from your Shopify product URL.</span>
       </label>
       <label class="dc-field">Quantity
         <input id="dc-quantity" name="quantity_owned" type="number" min="1" max="${MAX_QUANTITY_OWNED}" required />

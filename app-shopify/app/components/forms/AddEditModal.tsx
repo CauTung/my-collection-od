@@ -53,14 +53,18 @@ export function AddEditModal({ item, onClose }: AddEditModalProps) {
           <div className="modal-body">
             {!isEdit && (
               <div className="form-group">
-                <label className="form-label">Product ID (Shopify GID)</label>
+                <label className="form-label" htmlFor="product-id">Product ID</label>
                 <input 
+                  id="product-id"
                   type="text" 
                   name="product_id" 
                   className="form-input" 
-                  placeholder="gid://shopify/Product/123456789"
+                  inputMode="numeric"
+                  pattern="[0-9]+"
+                  placeholder="e.g. 123456789"
                   required
                 />
+                <small className="form-help">Enter the product number from your Shopify product URL.</small>
               </div>
             )}
             
