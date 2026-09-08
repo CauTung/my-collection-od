@@ -72,10 +72,15 @@ async function actionHandler({ request }: ActionFunctionArgs) {
   }
 
   // Create Item
+  // Strip idempotency_key — it is an application-level dedup token only; it has no
+  // corresponding field in the Shopify Metaobject definition and must never be forwarded.
+  const itemData = Object.fromEntries(
+    Object.entries(data).filter(([k]) => k !== "idempotency_key")
+  );
   let newItem: Awaited<ReturnType<typeof createCollectionItem>>;
   try {
     newItem = await createCollectionItem(session.customer_id, {
-      ...data,
+      ...itemData,
       source: "manual_entry",
     });
   } catch (error) {
