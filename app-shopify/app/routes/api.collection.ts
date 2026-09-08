@@ -29,28 +29,8 @@ async function loaderHandler({ request }: LoaderFunctionArgs) {
     in_wishlist: url.searchParams.has("in_wishlist") ? url.searchParams.get("in_wishlist") === "true" : undefined,
   };
 
-  try {
-    const result = await listCollectionItems(session.customer_id, filters);
-    
-    return new Response(JSON.stringify({
-      success: true,
-      data: result.items,
-      pageInfo: result.pageInfo,
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
-  } catch (err) {
-    logger.warn("Could not fetch collection items, falling back to empty list", { error: String(err) });
-    return new Response(JSON.stringify({
-      success: true,
-      data: [],
-      pageInfo: { hasNextPage: false, endCursor: null },
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
+  const result = await listCollectionItems(session.customer_id, filters);
+  return Response.json({ success: true, data: result.items, pageInfo: result.pageInfo });
 }
 
 export const loader = withErrorHandler(loaderHandler);

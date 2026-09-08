@@ -258,3 +258,10 @@ Yotpo/Klaviyo still log mock outcomes only; their environment placeholders are n
 | 2026-09-08 | Added historical order line-item continuation pagination (AUD-035) and collection stats cache integrity hardening | Prevent silent order truncation for large orders and protect cached aggregate stats against malformed or cross-customer items |
 
 See `docs/audit/staging-verification.md` for remaining Shopify, serverless, privacy, and human verification gates. No live schema migration or deployment is implied by local verification.
+
+
+### Storefront UI error and request lifecycle (2026-09-08)
+
+Scoped hidden selectors override explicit dashboard display rules, including pagination and edit-only fields. Product ID is disabled during Edit so its Add-only numeric validation cannot block updates. Collection and stats loaders propagate infrastructure failures to `withErrorHandler`; the browser displays a recoverable loading error with Retry instead of treating failures as empty collections or zero totals. Collection request generations discard superseded results, appended records are deduplicated by item ID, and per-item mutation locks disable wishlist/edit/delete until completion. Mutation success and subsequent refresh failure have separate messages. Card actions wrap on narrow screens. The sync description derives both order and year limits from constants.
+
+This correction does not establish feature completeness: URL-backed catalog filters/sort, grid/list selection, double-confirm deletion, clearing persisted optional fields, and preserving all loaded pages after a mutation remain review findings. Browser DOM tests use mocked API responses; Shopify dev-store and storefront theme verification remain required.

@@ -8,40 +8,12 @@ import { type LoaderFunctionArgs } from "react-router";
 import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { getCustomerCollectionMetafields } from "~/lib/metafield.server";
 import { withErrorHandler } from "~/lib/error-handler.server";
-import { logger } from "~/lib/logger.server";
 
 async function loaderHandler({ request }: LoaderFunctionArgs) {
   const session = authenticateAppProxyRequest(request);
 
-  try {
-    const { stats, syncState } = await getCustomerCollectionMetafields(session.customer_id);
-
-    return new Response(JSON.stringify({
-      success: true,
-      data: {
-        stats,
-        syncState,
-      },
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
-  } catch (error) {
-    logger.warn("Unable to fetch cached collection stats; returning initial values", {
-      error: String(error),
-      customerId: session.customer_id,
-    });
-    return new Response(JSON.stringify({
-      success: true,
-      data: {
-        stats: { total_items: 0, total_value: 0, wishlisted_count: 0 },
-        syncState: { status: "IDLE", last_synced_at: null, total_orders_synced: 0 },
-      },
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
+  const { stats, syncState } = await getCustomerCollectionMetafields(session.customer_id);
+  return Response.json({ success: true, data: { stats, syncState } });
 }
 
 export const loader = withErrorHandler(loaderHandler);

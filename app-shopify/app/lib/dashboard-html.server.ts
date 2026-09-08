@@ -13,6 +13,7 @@ import {
   DASHBOARD_SYNC_POLL_MAX_ATTEMPTS,
   DASHBOARD_TOAST_DURATION_MS,
   HISTORICAL_SYNC_LOOKBACK_YEARS,
+  HISTORICAL_SYNC_MAX_ORDERS,
   MAX_QUANTITY_OWNED,
   MAX_CERTIFICATE_NUMBER_LENGTH,
   MAX_USER_GRADE_LENGTH,
@@ -31,8 +32,10 @@ export function buildDashboardHtml(pathPrefix: string): string {
 
   return `
 <style>
+  #dc-app [hidden],.dc-modal[hidden],.dc-modal [hidden] { display:none !important; }
   .dc-app { color:#1a1a2e; font-family:Inter,system-ui,-apple-system,sans-serif; margin:2rem auto; max-width:1200px; padding:0 1rem; }
   .dc-header,.dc-actions,.dc-card-footer,.dc-form-actions { align-items:center; display:flex; gap:.75rem; justify-content:space-between; }
+  .dc-actions { flex-wrap:wrap; }
   .dc-header { flex-wrap:wrap; margin-bottom:1.5rem; }
   .dc-title { font-size:1.75rem; margin:0; }
   .dc-title-accent,.dc-card-price { color:#b8860b; }
@@ -48,11 +51,12 @@ export function buildDashboardHtml(pathPrefix: string): string {
   .dc-stat-value { font-size:1.5rem; font-weight:700; margin-top:.3rem; }
   .dc-sync-detail { color:#666; font-size:.85rem; margin:-.75rem 0 1.5rem; min-height:1.2em; }
   .dc-grid { display:grid; gap:1rem; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
-  .dc-card { padding:1rem; }
+  .dc-card { padding:1rem; min-width:0; overflow-wrap:anywhere; }
   .dc-card-title { font-size:1rem; margin:0 0 .75rem; overflow-wrap:anywhere; }
   .dc-card-meta { color:#555; display:grid; font-size:.86rem; gap:.3rem; margin-bottom:1rem; }
   .dc-card-price { font-size:1.05rem; font-weight:700; }
-  .dc-card-actions { display:flex; gap:.4rem; }
+  .dc-card-footer { flex-wrap:wrap; }
+  .dc-card-actions { flex-wrap:wrap; display:flex; gap:.4rem; }
   .dc-empty,.dc-loading { color:#777; grid-column:1/-1; padding:3rem 1rem; text-align:center; }
   .dc-load-more { display:block; margin:1.25rem auto 0; }
   .dc-toast { background:#1a1a2e; border-radius:8px; bottom:2rem; color:#fff; padding:.75rem 1rem; position:fixed; right:2rem; z-index:10001; }
@@ -72,6 +76,7 @@ export function buildDashboardHtml(pathPrefix: string): string {
 
 <section class="dc-app" id="dc-app">
   <div class="dc-loading" id="dc-loading" role="status">Loading your collection...</div>
+  <button class="dc-btn dc-btn-ghost" id="dc-retry" type="button" hidden>Retry loading</button>
   <div id="dc-content" hidden>
     <header class="dc-header">
       <h1 class="dc-title">My <span class="dc-title-accent">Collection</span></h1>
@@ -80,6 +85,7 @@ export function buildDashboardHtml(pathPrefix: string): string {
         <button class="dc-btn dc-btn-primary" id="dc-add-btn" type="button">Add Item</button>
       </div>
     </header>
+    <p>Sync checks up to ${HISTORICAL_SYNC_MAX_ORDERS} past orders within the last ${HISTORICAL_SYNC_LOOKBACK_YEARS} years.</p>
     <div class="dc-stats" id="dc-stats"></div>
     <p class="dc-sync-detail" id="dc-sync-detail" aria-live="polite"></p>
     <div class="dc-grid" id="dc-grid"></div>
@@ -138,6 +144,8 @@ export function buildDashboardHtml(pathPrefix: string): string {
   var LOOKBACK_YEARS = ${HISTORICAL_SYNC_LOOKBACK_YEARS};
   var currentItems = [];
   var nextCursor = null;
+  var collectionGeneration = 0;
+  var pendingItems = new Set();
   var formState = null;
   var formOpener = null;
   var syncPollGeneration = 0;
@@ -172,10 +180,10 @@ export function buildDashboardHtml(pathPrefix: string): string {
       return response.text().then(function (text) {
         var payload = null;
         if (text) {
-          try { payload = JSON.parse(text); } catch (_error) { throw new Error("API returned an invalid response"); }
+          try { payload = JSON.parse(text); } catch (_error) { throw new Error(response.ok ? "API returned an invalid response" : ("API request failed with status " + response.status)); }
         }
         if (!response.ok) {
-          var message = payload && payload.error && payload.error.message;
+          var message = payload && payload.message;
           throw new Error(message || ("API request failed with status " + response.status));
         }
         return payload;
@@ -223,7 +231,7 @@ export function buildDashboardHtml(pathPrefix: string): string {
     var container = byId("dc-grid");
     clear(container);
     if (!items.length) {
-      appendText(container, "div", "dc-empty", "No items yet. Sync past orders or add an item manually.");
+      appendText(container, "div", "dc-empty", nextCursor ? "No visible items on this page. Load more to continue." : "No items yet. Sync past orders or add an item manually.");
       return;
     }
     items.forEach(function (item) {
@@ -241,12 +249,15 @@ export function buildDashboardHtml(pathPrefix: string): string {
       appendText(footer, "div", "dc-card-price", value != null ? ("$" + numericValue(value).toLocaleString()) : "No value");
       var actions = appendText(footer, "div", "dc-card-actions", "");
       var wishlist = appendText(actions, "button", "dc-btn dc-btn-ghost", item.in_wishlist ? "Unwishlist" : "Wishlist");
+      wishlist.disabled = pendingItems.has(item.item_id);
       wishlist.type = "button";
       wishlist.addEventListener("click", function () { toggleWishlist(item); });
       var edit = appendText(actions, "button", "dc-btn dc-btn-ghost", "Edit");
+      edit.disabled = pendingItems.has(item.item_id);
       edit.type = "button";
       edit.addEventListener("click", function () { openItemForm(item); });
       var remove = appendText(actions, "button", "dc-btn dc-btn-danger", "Delete");
+      remove.disabled = pendingItems.has(item.item_id);
       remove.type = "button";
       remove.addEventListener("click", function () { deleteItem(item); });
     });
@@ -261,16 +272,27 @@ export function buildDashboardHtml(pathPrefix: string): string {
     });
   }
   function loadCollection(after, append) {
+    var generation = ++collectionGeneration;
+    byId("dc-load-more").disabled = true;
     var path = "?first=" + PAGE_SIZE + (after ? ("&after=" + encodeURIComponent(after)) : "");
     return apiFetch(path).then(function (payload) {
-      var items = payload && Array.isArray(payload.data) ? payload.data : [];
-      currentItems = append ? currentItems.concat(items) : items;
-      nextCursor = payload && payload.pageInfo && payload.pageInfo.hasNextPage ? payload.pageInfo.endCursor : null;
+      if (generation !== collectionGeneration) return;
+      if (!payload || !Array.isArray(payload.data) || !payload.pageInfo) throw new Error("Collection response is missing data");
+      var items = payload.data;
+      currentItems = append ? currentItems.concat(items.filter(function (item) { return !currentItems.some(function (existing) { return existing.item_id === item.item_id; }); })) : items;
+      nextCursor = payload && payload.pageInfo && payload.pageInfo.hasNextPage && payload.pageInfo.endCursor !== after ? payload.pageInfo.endCursor : null;
       byId("dc-load-more").hidden = !nextCursor;
       renderGrid(currentItems);
+    }).finally(function () {
+      if (generation === collectionGeneration) {
+        byId("dc-load-more").disabled = false;
+        byId("dc-load-more").textContent = "Load More";
+      }
     });
   }
   function loadData() {
+    byId("dc-retry").hidden = true;
+    byId("dc-loading").textContent = "Loading your collection...";
     return Promise.all([loadStats(), loadCollection(null, false)]).then(function (results) {
       byId("dc-loading").hidden = true;
       byId("dc-content").hidden = false;
@@ -278,7 +300,9 @@ export function buildDashboardHtml(pathPrefix: string): string {
       var status = syncStateStatus(state);
       if (status === "queued" || status === "syncing") startSyncPolling();
     }).catch(function (error) {
+      byId("dc-loading").hidden = false;
       byId("dc-loading").textContent = "Failed to load collection: " + error.message;
+      byId("dc-retry").hidden = false;
     });
   }
   function startSyncPolling() {
@@ -333,6 +357,7 @@ export function buildDashboardHtml(pathPrefix: string): string {
     formState = { itemId: item ? item.item_id : null, idempotencyKey: crypto.randomUUID(), submitting: false, originalItem: item };
     byId("dc-modal-title").textContent = item ? "Edit Item" : "Add Item";
     byId("dc-product-field").hidden = Boolean(item);
+    byId("dc-product-id").disabled = Boolean(item);
     setInput("dc-product-id", item && item.product_id);
     setInput("dc-quantity", item ? item.quantity_owned : 1);
     setInput("dc-purchase-date", item && item.purchase_date);
@@ -409,20 +434,27 @@ export function buildDashboardHtml(pathPrefix: string): string {
     });
   }
   function toggleWishlist(item) {
+    if (pendingItems.has(item.item_id)) return;
+    pendingItems.add(item.item_id);
+    renderGrid(currentItems);
     var method = item.in_wishlist ? "DELETE" : "POST";
     apiFetch("/" + encodeURIComponent(item.item_id) + "/wishlist", { method: method }).then(function () {
       showToast(item.in_wishlist ? "Removed from wishlist" : "Added to wishlist");
-      return loadCollection(null, false);
-    }).catch(function (error) { showToast("Wishlist failed: " + error.message, true); });
+      return loadCollection(null, false).catch(function (error) { showToast("Wishlist saved, but collection refresh failed: " + error.message, true); });
+    }).catch(function (error) { showToast("Wishlist failed: " + error.message, true); }).finally(function () { pendingItems.delete(item.item_id); renderGrid(currentItems); });
   }
   function deleteItem(item) {
+    if (pendingItems.has(item.item_id)) return;
     if (!confirm("Remove this item from your collection?")) return;
+    pendingItems.add(item.item_id);
+    renderGrid(currentItems);
     apiFetch("/" + encodeURIComponent(item.item_id), { method: "DELETE" }).then(function () {
       showToast("Item removed");
-      return Promise.all([loadStats(), loadCollection(null, false)]);
-    }).catch(function (error) { showToast("Delete failed: " + error.message, true); });
+      return Promise.all([loadStats(), loadCollection(null, false)]).catch(function (error) { showToast("Item removed, but collection refresh failed: " + error.message, true); });
+    }).catch(function (error) { showToast("Delete failed: " + error.message, true); }).finally(function () { pendingItems.delete(item.item_id); renderGrid(currentItems); });
   }
 
+  byId("dc-retry").addEventListener("click", loadData);
   byId("dc-sync-btn").addEventListener("click", triggerSync);
   byId("dc-add-btn").addEventListener("click", function () { openItemForm(null); });
   byId("dc-cancel-item").addEventListener("click", closeItemForm);
@@ -432,9 +464,10 @@ export function buildDashboardHtml(pathPrefix: string): string {
     var button = byId("dc-load-more");
     if (!nextCursor || button.disabled) return;
     button.disabled = true;
+    button.textContent = "Loading...";
     loadCollection(nextCursor, true).catch(function (error) {
       showToast("Could not load more items: " + error.message, true);
-    }).finally(function () { button.disabled = false; });
+    });
   });
   loadData();
 })();

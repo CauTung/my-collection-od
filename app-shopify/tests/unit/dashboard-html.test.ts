@@ -57,6 +57,71 @@ function harness(prefix = APP_PROXY_DEFAULT_PATH_PREFIX) {
 async function flush() { for (let index = 0; index < 20; index += 1) await Promise.resolve(); }
 
 describe("dashboard browser behavior", () => {
+  it("keeps hidden controls hidden despite dashboard display rules", () => {
+    expect(buildDashboardHtml(APP_PROXY_DEFAULT_PATH_PREFIX)).toContain("#dc-app [hidden],.dc-modal[hidden],.dc-modal [hidden] { display:none !important; }");
+  });
+  it("hides pagination for an empty collection and restores it for a following page", async () => {
+    const browser = harness();
+    await flush();
+    browser.fetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ data: [], pageInfo: { hasNextPage: false, endCursor: null } })) });
+    browser.element("dc-load-more").dispatch("click");
+    await flush();
+    expect(browser.element("dc-load-more").hidden).toBe(true);
+    browser.element("dc-load-more").dispatch("click");
+    expect(browser.fetch).toHaveBeenCalledTimes(3);
+  });
+  it("disables product validation during edit and restores it for add", async () => {
+    const browser = harness();
+    await flush();
+    browser.element("dc-grid").children[0].children[2].children[1].children[1].dispatch("click");
+    expect(browser.element("dc-product-field").hidden).toBe(true);
+    expect(browser.element("dc-product-id").disabled).toBe(true);
+    browser.element("dc-cancel-item").dispatch("click");
+    browser.element("dc-add-btn").dispatch("click");
+    expect(browser.element("dc-product-id").disabled).toBe(false);
+  });
+  it("shows API messages and offers retry after an initial load failure", async () => {
+    const browser = harness();
+    await flush();
+    browser.fetch.mockResolvedValueOnce({ ok: false, status: 502, text: () => Promise.resolve(JSON.stringify({ error: "GRAPHQL_ERROR", message: "Shopify unavailable" })) });
+    browser.element("dc-retry").dispatch("click");
+    await flush();
+    expect(browser.element("dc-retry").hidden).toBe(false);
+    expect(browser.element("dc-loading").textContent).toBe("Failed to load collection: Shopify unavailable");
+    browser.element("dc-retry").dispatch("click");
+    await flush();
+    expect(browser.element("dc-retry").hidden).toBe(true);
+    expect(browser.element("dc-loading").hidden).toBe(true);
+  });
+  it("blocks repeated wishlist mutations while the item is busy", async () => {
+    const browser = harness();
+    await flush();
+    const button = browser.element("dc-grid").children[0].children[2].children[1].children[0];
+    button.dispatch("click");
+    button.dispatch("click");
+    expect(browser.fetch.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
+    expect(browser.element("dc-grid").children[0].children[2].children[1].children.map((action) => action.disabled)).toEqual([true, true, true]);
+    await flush();
+    expect(browser.element("dc-grid").children[0].children[2].children[1].children.map((action) => action.disabled)).toEqual([false, false, false]);
+  });
+  it("blocks pagination during a replacement refresh after deletion", async () => {
+    const browser = harness();
+    await flush();
+    let finishRefresh: ((response: { ok: boolean; status: number; text: () => Promise<string> }) => void) | undefined;
+    browser.fetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve("{}") });
+    browser.fetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ data: { stats: {}, syncState: {} } })) });
+    browser.fetch.mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve; }));
+    browser.element("dc-grid").children[0].children[2].children[1].children[2].dispatch("click");
+    await flush();
+    expect(browser.element("dc-load-more").disabled).toBe(true);
+    browser.element("dc-load-more").dispatch("click");
+    expect(browser.fetch).toHaveBeenCalledTimes(5);
+    if (!finishRefresh) throw new Error("Replacement request did not start");
+    finishRefresh({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ data: [], pageInfo: { hasNextPage: false } })) });
+    await flush();
+    expect(browser.element("dc-load-more").hidden).toBe(true);
+    expect(browser.element("dc-grid").children[0].textContent).toBe("No items yet. Sync past orders or add an item manually.");
+  });
   it.each(["//external.example", "/\\external.example", "/\n/external.example"])("keeps API requests same-origin for invalid prefix %s", (prefix) => {
     const browser = harness(prefix);
     expect(browser.fetch.mock.calls.map(([url]) => url)).toEqual([`${APP_PROXY_DEFAULT_PATH_PREFIX}/api/collection/stats`, `${APP_PROXY_DEFAULT_PATH_PREFIX}/api/collection?first=${COLLECTION_PAGE_SIZE}`]);
