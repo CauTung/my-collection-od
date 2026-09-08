@@ -81,6 +81,35 @@ describe("recalculateAndCacheStats", () => {
     });
   });
 
+  it("handles nullable field values returned by Shopify for unset optional fields", async () => {
+    mockGraphQL.mockResolvedValueOnce({
+      data: {
+        metaobjects: {
+          nodes: [
+            {
+              fields: [
+                { key: "customer_id", value: CUSTOMER_GID },
+                { key: "is_deleted", value: "false" },
+                { key: "quantity_owned", value: "2" },
+                { key: "purchase_price", value: "15.00" },
+                { key: "current_market_value", value: null },
+                { key: "user_notes", value: null },
+                { key: "certificate_number", value: null },
+              ],
+            },
+          ],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    });
+
+    const stats = await recalculateAndCacheStats(CUSTOMER_GID);
+    expect(stats.total_items).toBe(2);
+    expect(stats.total_value).toBe(30);
+    expect(mockUpdateMetafields).toHaveBeenCalledTimes(1);
+    expect(mockUpdateMetafields).toHaveBeenCalledWith(CUSTOMER_GID, { total_items: 2, total_value: 30 });
+  });
+
   it("handles pagination correctly", async () => {
     // Page 1
     mockGraphQL.mockResolvedValueOnce({
@@ -155,10 +184,10 @@ describe("recalculateAndCacheStats", () => {
 function page(fields: Record<string, string>, hasNextPage = false, endCursor: string | null = null) {
   return { data: { metaobjects: { nodes: [{ fields: Object.entries(fields).map(([key, value]) => ({ key, value })) }], pageInfo: { hasNextPage, endCursor } } } };
 }
-const validFields = { customer_id: CUSTOMER_GID, is_deleted: "false", quantity_owned: "2", purchase_price: "10.25" };
+const validFields: Record<string, string> = { customer_id: CUSTOMER_GID, is_deleted: "false", quantity_owned: "2", purchase_price: "10.25" };
 
 describe("stats integrity failures", () => {
-  it.each([
+  it.each<Record<string, string>>([
     { customer_id: "gid://shopify/Customer/456" }, { is_deleted: "true" },
     { quantity_owned: "2junk" }, { quantity_owned: "1.5" }, { quantity_owned: "0" },
     { purchase_price: "NaN" }, { purchase_price: "-1" }, { purchase_price: "12junk" },

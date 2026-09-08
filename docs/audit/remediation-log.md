@@ -187,3 +187,38 @@ The deprecated `envFile` warning remains non-blocking. No schema provisioning or
 The owner explicitly chose to retain the current MVP data model rather than expand it with event/item contribution Metaobjects. AUD-017, AUD-018, AUD-024, AUD-028, and AUD-034 remain open where their resolution requires that architecture change. This is a scope decision, not acceptance of production data-loss/privacy risk. Continue only in-scope fixes such as historical line-item pagination and aggregate cache validation.
 
 Final E/F/G reconciliation: independent reviewer confirmed no new blocker in the reviewed changes and independently ran 4 relevant test files / 32 tests successfully. All results are local mock/VM evidence.
+
+## Batch H — Historical Line-Item Pagination and Aggregate Cache Hardening
+
+- Date: 2026-09-08
+- Findings: AUD-035, collection stats cache integrity hardening
+- Scope: Complete historical order line-item continuation pagination and aggregate collection stats validation
+
+Changes:
+
+- Implemented `loadHistoricalOrderLineItems(order: HistoricalOrder): Promise<HistoricalLineItem[]>` in `app/lib/batch-sync.server.ts` to paginate orders exceeding 250 line items using GraphQL `GetHistoricalOrderLineItems` with `ORDER_LINE_ITEM_PAGE_SIZE = 250`.
+- Added cursor advancement tracking and repeated-cursor loop checks (`seenCursors`).
+- Order claim dedup lock is explicitly deferred until all continuation pages of the order succeed. Any line-item pagination failure isolates the specific order (increments failed counter and skips claiming dedup lock) so it can be retried later without permanent lockout.
+- Added strict aggregate validation in `recalculateAndCacheStats()` (`app/lib/stats.server.ts`):
+  - Enforces customer ownership boundary check (`customer_id === customerId`) and active status (`is_deleted === "false"`) on every returned Metaobject node.
+  - Strictly validates numeric fields using regex (`parseStatsNumber`), rejecting negative, NaN, unsafe integers, or malformed decimals.
+  - Enforces pagination cursor advancement and prevents infinite loops on repeated cursors.
+  - Propagates old-cache read failures instead of falling back to 0 items, preventing improper loyalty bonus triggers.
+  - Writes to cache only after the entire collection across all pages has been validated.
+- Added regression tests in `batch-sync.test.ts` (boundary test for 251 line items across pages), `batch-sync-integration.test.ts`, and `stats.test.ts` (cross-customer items on later pages, malformed pages, cursor loops, numeric validation).
+- Updated `docs/architecture-overview.md`, `docs/audit/findings.md`, and `docs/audit/staging-verification.md`.
+
+Verification:
+
+- [Typecheck: pass](verification/2026-09-08-typecheck.txt)
+- [Tests: 30 files / 181 tests pass](verification/2026-09-08-test.txt)
+- [Lint: pass (0 errors, 0 warnings)](verification/2026-09-08-lint.txt)
+- [Build: pass](verification/2026-09-08-build.txt)
+- Real dev store: pending (**CẦN VERIFY TRÊN DEV STORE THẬT TRƯỚC KHI COI LÀ XONG**)
+- Independent review round 1: 1 P1 blocker identified (`stats.server.ts` rejected `null` in Metaobject optional fields returned by Shopify Admin GraphQL) and 3 P2 risks identified (retry stats recovery when `claimedCoins.length === 0`, unbounded line-item page count, missing exact 250 boundary test).
+- Independent review round 2: All 4 items remediated and reconciled:
+  - `stats.server.ts`: typed `value: string | null`, safely skips null/undefined fields and falls back to purchase price, with dedicated unit test.
+  - `batch-sync.server.ts`: calls `recalculateAndCacheStats(customerId)` on retry if all orders were previously claimed and 0 failures occurred.
+  - `constants.ts`: added `ORDER_LINE_ITEM_MAX_PAGES = 40` safety bound, enforced in `loadHistoricalOrderLineItems`.
+  - `batch-sync.test.ts`: added exact boundary test for 250 items with `hasNextPage: false` (asserting 1 query and 0 continuation).
+  - Reviewer confirmed: **0 P0, 0 P1, 0 P2 blockers remaining.**

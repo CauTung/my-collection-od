@@ -17,6 +17,7 @@ import {
   HISTORICAL_SYNC_LOOKBACK_YEARS,
   BATCH_SYNC_CONCURRENCY,
   ORDER_LINE_ITEM_PAGE_SIZE,
+  ORDER_LINE_ITEM_MAX_PAGES,
 } from "~/config/constants";
 import { shopifyGraphQL } from "./graphql-client.server";
 import { claimOrderSync } from "./dedup.server";
@@ -245,6 +246,9 @@ async function runBatchSyncBackground(customerId: string): Promise<void> {
 
     if (claimedCoins.length === 0) {
       progress.total = paginationFailures + coinsByOrder.size;
+      if (progress.failed === 0) {
+        await recalculateAndCacheStats(customerId);
+      }
       await finishSync(customerId, progress, progress.failed > 0 ? "failed" : "completed");
       return;
     }
@@ -332,12 +336,17 @@ async function finishSync(
   logger.info(`Batch sync ${status}`, { customerId, progress });
 }
 
-/** Load every page before returning an order; malformed or looping cursors throw. */
+/** Load every page before returning an order; malformed, looping, or excessive cursors throw. */
 async function loadHistoricalOrderLineItems(order: HistoricalOrder): Promise<HistoricalLineItem[]> {
   let connection = order.lineItems;
   const items: HistoricalLineItem[] = [];
   const seenCursors = new Set<string>();
+  let pageCount = 0;
   while (true) {
+    pageCount += 1;
+    if (pageCount > ORDER_LINE_ITEM_MAX_PAGES) {
+      throw new Error(`Line-item page count exceeded safety limit for order ${order.id}`);
+    }
     if (!connection || !Array.isArray(connection.nodes) ||
         typeof connection.pageInfo?.hasNextPage !== "boolean") {
       throw new Error(`Missing line-item connection for order ${order.id}`);

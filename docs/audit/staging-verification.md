@@ -17,7 +17,7 @@ For every scenario record UTC timestamp, environment/domain, redacted request ID
 | Historical sync | Known orders returned for numeric customer filter; exact counts under maximum history and throttling | Pending |
 | Queue lifetime | More than the configured job limit all finish within the deployed function duration | Pending |
 | Partial failure | Successful sibling item not repeated; failed item recovered on retry | Blocked by AUD-017/AUD-034 architecture decision |
-| Large order | All 251 line items processed or explicit agreed business bound enforced | Open AUD-035 |
+| Large order | All 251 line items processed or explicit agreed business bound enforced | Fixed locally; staging verification pending |
 | GraphQL aliases | Actual store accepts payload sizes; cumulative cost and throttle recovery observed | Pending |
 | Dashboard | Real theme renders script, form double-submit is suppressed, keyboard focus and sync polling work | Pending |
 | Ownership transfer | Stable production domain and both app identities configured for the intended owner | Pending |

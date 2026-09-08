@@ -8,6 +8,8 @@ import { checkProductsHaveCollectibleData } from "~/lib/metafield.server";
 import { shopifyGraphQL } from "~/lib/graphql-client.server";
 import { upsertCollectionItemByProduct } from "~/lib/metaobject.server";
 import { claimOrderSync } from "~/lib/dedup.server";
+import { recalculateAndCacheStats } from "~/lib/stats.server";
+import { ORDER_LINE_ITEM_MAX_PAGES } from "~/config/constants";
 
 vi.mock("~/lib/queue.server", () => ({ scheduleJob: vi.fn() }));
 vi.mock("~/lib/metafield.server", () => ({
@@ -26,6 +28,7 @@ const mockUpdateSyncState = vi.mocked(updateCustomerSyncStateMetafields);
 const mockCheckCollectible = vi.mocked(checkProductsHaveCollectibleData);
 const mockGraphQL = vi.mocked(shopifyGraphQL);
 const mockClaimOrder = vi.mocked(claimOrderSync);
+const mockRecalculateStats = vi.mocked(recalculateAndCacheStats);
 const CUSTOMER_GID = "gid://shopify/Customer/123";
 
 beforeEach(() => {
@@ -165,10 +168,10 @@ async function runHistoricalSync() {
 describe("historical order line-item pagination", () => {
   it("applies all 251 line items only after loading the continuation page", async () => {
     mockGraphQL.mockResolvedValueOnce({ data: { orders: { nodes: [historicalOrder(1, 250, true, "cursor-250")] } } });
-    mockGraphQL.mockImplementationOnce(async () => {
+    mockGraphQL.mockImplementationOnce(() => {
       expect(mockClaimOrder).toHaveBeenCalledTimes(0);
       expect(upsertCollectionItemByProduct).toHaveBeenCalledTimes(0);
-      return { data: { order: historicalOrder(1, 1, false, null) } };
+      return Promise.resolve({ data: { order: historicalOrder(1, 1, false, null) } });
     });
     await runHistoricalSync();
     expect(mockGraphQL).toHaveBeenCalledTimes(2);
@@ -201,6 +204,43 @@ describe("historical order line-item pagination", () => {
     expect(upsertCollectionItemByProduct).toHaveBeenCalledTimes(0);
     expect(mockUpdateSyncState).toHaveBeenLastCalledWith(CUSTOMER_GID, {
       sync_status: "failed", sync_progress: { processed: 0, total: 1, failed: 1 },
+    });
+  });
+
+  it("processes an order with exactly 250 items in a single query without continuation", async () => {
+    mockGraphQL.mockResolvedValueOnce({ data: { orders: { nodes: [historicalOrder(1, 250, false, null)] } } });
+    await runHistoricalSync();
+    expect(mockGraphQL).toHaveBeenCalledTimes(1);
+    expect(mockClaimOrder).toHaveBeenCalledExactlyOnceWith(CUSTOMER_GID, "gid://shopify/Order/1");
+    expect(upsertCollectionItemByProduct).toHaveBeenCalledExactlyOnceWith(CUSTOMER_GID, "gid://shopify/Product/1", {
+      quantity_owned: 250, purchase_date: "2026-01-01", purchase_price: 10,
+      source: "shopify_sync", external_order_id: "gid://shopify/Order/1",
+    });
+  });
+
+  it("isolates and rejects an order exceeding the maximum line-item page limit", async () => {
+    mockGraphQL.mockResolvedValueOnce({ data: { orders: { nodes: [historicalOrder(1, 250, true, "cursor-1")] } } });
+    for (let p = 1; p <= ORDER_LINE_ITEM_MAX_PAGES; p++) {
+      mockGraphQL.mockResolvedValueOnce({ data: { order: historicalOrder(1, 1, true, `cursor-${p + 1}`) } });
+    }
+    await runHistoricalSync();
+    expect(mockClaimOrder).toHaveBeenCalledTimes(0);
+    expect(upsertCollectionItemByProduct).toHaveBeenCalledTimes(0);
+    expect(mockUpdateSyncState).toHaveBeenLastCalledWith(CUSTOMER_GID, {
+      sync_status: "failed", sync_progress: { processed: 0, total: 1, failed: 1 },
+    });
+  });
+
+  it("recalculates stats on retry when all orders were already claimed and no new coins claimed", async () => {
+    mockGraphQL.mockResolvedValueOnce({ data: { orders: { nodes: [historicalOrder(1, 1, false, null)] } } });
+    mockClaimOrder.mockResolvedValueOnce(false); // already claimed
+    await runHistoricalSync();
+    expect(mockClaimOrder).toHaveBeenCalledTimes(1);
+    expect(upsertCollectionItemByProduct).toHaveBeenCalledTimes(0);
+    expect(mockRecalculateStats).toHaveBeenCalledTimes(1);
+    expect(mockRecalculateStats).toHaveBeenCalledWith(CUSTOMER_GID);
+    expect(mockUpdateSyncState).toHaveBeenLastCalledWith(CUSTOMER_GID, {
+      sync_status: "completed", sync_progress: { processed: 1, total: 1, failed: 0 },
     });
   });
 });

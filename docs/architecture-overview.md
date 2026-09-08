@@ -160,6 +160,9 @@ POST /api/collection/sync → queue.scheduleJob(customerId)
     → registerBackgroundTask(completion) qua Vercel waitUntil
     → trả HTTP 202 kèm status syncing/queued
     → background: query orders bằng numeric customer_id (lookback + max 200)
+    → loadHistoricalOrderLineItems(order): phân trang line items khi order > 250 items; kiểm tra lặp cursor; giới hạn ORDER_LINE_ITEM_MAX_PAGES = 40 (tối đa 10,000 items/order)
+    → lỗi phân trang line items sẽ cô lập order đó (không claim dedup lock) để có thể retry sau mà không mất data
+    → nếu toàn bộ orders đã claim từ trước (claimedCoins = 0 và failed = 0), tự động tính lại stats để phục hồi cache nếu run trước crash
     → fetch collectible prerequisites theo alias chunks 25, tối đa 5 queries đồng thời, trước khi tạo dedup claim
     → claim orders theo chunk concurrency 5
     → filterCoinLineItems() → upsert từng product bằng variables theo chunk concurrency 5
@@ -180,7 +183,7 @@ Shopify App Proxy ký từng request tới `/api/collection*`
     → metaobject.server.ts CRUD
     → mutation fail: release processing claim rồi rethrow để cùng request retry được
     → mutation success: cache exact result
-    → recalculateAndCacheStats()
+    → recalculateAndCacheStats() (phân trang metaobjects, chấp nhận nullable optional fields từ Shopify, validate customer_id/is_deleted từng node, parse strict decimal, cursor advance guard)
 ```
 
 ---
@@ -242,7 +245,7 @@ The active storefront renderer is `app/lib/dashboard-html.server.ts`, shared by 
 
 The Admin GraphQL client validates response envelopes before returning data. Missing/null top-level data without execution errors is an infrastructure error. HTTP 429 and wholly rejected THROTTLED responses retry within the configured limit; ambiguous mutation network failures and partial-data execution errors do not replay writes. Schema provisioning uses the shared client and rejects unexpected or mixed definition errors and missing success nodes instead of reporting successful setup.
 
-`config/constants.ts` now owns customer/product namespaces (including the catalog fallback), product classification lists, stats and line-item page sizes, schema inventory size, and placeholder integration delays. Runtime reads and explicit setup import the same namespace definitions. Namespace changes do not migrate existing records automatically. Nested historical line-item pagination beyond the configured first page remains AUD-035.
+`config/constants.ts` now owns customer/product namespaces (including the catalog fallback), product classification lists, stats and line-item page sizes, schema inventory size, and placeholder integration delays. Runtime reads and explicit setup import the same namespace definitions. Namespace changes do not migrate existing records automatically. Historical line-item pagination beyond 250 items per order (AUD-035) is implemented in `loadHistoricalOrderLineItems()`, and collection stats calculation (`recalculateAndCacheStats`) enforces strict customer ownership, active status, decimal parsing, and cursor pagination loop checks before updating cached metafields.
 
 Yotpo/Klaviyo still log mock outcomes only; their environment placeholders are not runtime credentials. `SHOPIFY_CLIENT_ID` and `APP_HOST` are operator references and are not consumed by the application. Actual proxy/callback configuration lives in Shopify configuration. Required runtime values are `SHOPIFY_APP_SECRET`, `SHOPIFY_ADMIN_ACCESS_TOKEN`, and `SHOPIFY_SHOP_DOMAIN`. Build performs no schema mutation. Tests now fail when no test files are discovered.
 
@@ -250,5 +253,6 @@ Yotpo/Klaviyo still log mock outcomes only; their environment placeholders are n
 |---|---|---|
 | 2026-09-07 | Completed GraphQL/setup failure classification and shared storefront error handling | Prevent false successful setup, unsafe replay, and lost UI errors |
 | 2026-09-07 | Centralized shared namespace/classification configuration and replaced template README/env guidance | Prevent setup/runtime drift and inaccurate owner handover |
+| 2026-09-08 | Added historical order line-item continuation pagination (AUD-035) and collection stats cache integrity hardening | Prevent silent order truncation for large orders and protect cached aggregate stats against malformed or cross-customer items |
 
 See `docs/audit/staging-verification.md` for remaining Shopify, serverless, privacy, and human verification gates. No live schema migration or deployment is implied by local verification.

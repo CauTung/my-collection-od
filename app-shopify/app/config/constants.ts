@@ -134,6 +134,9 @@ export const METAOBJECT_MAX_PAGE_SIZE = 250;
 /** Maximum nested line-item page currently requested by historical sync. */
 export const ORDER_LINE_ITEM_PAGE_SIZE = 250;
 
+/** Maximum continuation pages allowed when paginating an order's line items. */
+export const ORDER_LINE_ITEM_MAX_PAGES = 40;
+
 /** Definition inventory page requested by the explicit setup script. */
 export const SCHEMA_DEFINITION_PAGE_SIZE = 50;
 

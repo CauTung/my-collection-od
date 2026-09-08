@@ -399,12 +399,15 @@
 ## AUD-035 — Orders With More Than 250 Line Items Are Truncated
 
 - Severity: P2
-- Status: Open
-- Location: historical orders GraphQL query
-- Evidence: Each nested `lineItems(first: 250)` connection omits `pageInfo` and has no continuation query.
-- Impact: Extremely large orders can be only partially synchronized.
-- Recommendation: Confirm the business maximum order size; add per-order pagination if 250 is not a guaranteed upper bound.
-- Acceptance: Boundary test with 251 line items either rejects by documented business rule or processes the final item through pagination.
+- Status: Fixed locally; dev-store staging verification pending
+- Location: `app/lib/batch-sync.server.ts`, `tests/unit/batch-sync.test.ts`
+- Evidence: Each nested `lineItems(first: 250)` connection previously omitted `pageInfo` and had no continuation query. An order with >250 items had its trailing items silently dropped.
+- Impact: Extremely large orders could be only partially synchronized, while the order-level dedup claim would permanently mark the order as processed.
+- Recommendation: Add per-order continuation pagination via GraphQL before order claiming; isolate and retry orders if pagination fails.
+- Remediation: Added `loadHistoricalOrderLineItems` in `batch-sync.server.ts` to paginate line items per order using `GetHistoricalOrderLineItems`, `ORDER_LINE_ITEM_PAGE_SIZE = 250`, and `ORDER_LINE_ITEM_MAX_PAGES = 40`. Tracks cursor advancement, prevents cursor loops, and isolates pathological orders exceeding the safety limit without premature dedup locking. If pagination fails, the order is isolated (failure recorded, order dedup claim skipped) so the order can be retried without permanent lockout.
+- Acceptance: Unit tests with 250 items (exact 1 query boundary), 251 line items across 2 pages (continuation query with cursor), and orders exceeding the 40-page limit confirm exact line-item loading and failure isolation.
+- Owner: Batch H implementer
+- Independent review: Round 1 identified 1 P1 blocker (nullable metaobject fields in stats) and 3 P2 risks (retry stats, page cap, 250 boundary test); Round 2 confirmed all resolved with 0 blockers remaining.
 
 ## AUD-036 — Vercel Maximum Duration Can Still Terminate Batch Work
 

@@ -21,7 +21,7 @@ import { buildMetaobjectFieldFilter } from "./metaobject-search.server";
 
 interface StatsResponse {
   metaobjects?: {
-    nodes?: Array<{ fields?: Array<{ key: string; value: string }> }>;
+    nodes?: Array<{ fields?: Array<{ key: string; value: string | null }> }>;
     pageInfo?: { hasNextPage: boolean; endCursor: string | null };
   };
 }
@@ -74,10 +74,16 @@ export async function recalculateAndCacheStats(customerId: string): Promise<Cust
         if (!node || !Array.isArray(node.fields)) throw new Error("Stats item fields are missing");
         const fields = new Map<string, string>();
         for (const field of node.fields) {
-          if (!field || typeof field.key !== "string" || typeof field.value !== "string" || fields.has(field.key)) {
+          if (!field || typeof field.key !== "string" || fields.has(field.key)) {
             throw new Error("Stats item fields are malformed");
           }
-          fields.set(field.key, field.value);
+          // Shopify Admin GraphQL returns nullable field values (value: null) for unset optional fields.
+          if (field.value !== null && field.value !== undefined) {
+            if (typeof field.value !== "string") {
+              throw new Error("Stats item fields are malformed");
+            }
+            fields.set(field.key, field.value);
+          }
         }
         // Shopify search is not the only ownership boundary: validate every returned record.
         if (fields.get("customer_id") !== customerId || fields.get("is_deleted") !== "false") {
