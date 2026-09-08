@@ -108,14 +108,15 @@ describe("dashboard browser behavior", () => {
     const browser = harness();
     await flush();
     let finishRefresh: ((response: { ok: boolean; status: number; text: () => Promise<string> }) => void) | undefined;
+    // New flow after delete: DELETE request, then loadCollection (pending).
+    // loadStats is called via setTimeout so it does not fire in this test.
     browser.fetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve("{}") });
-    browser.fetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ data: { stats: {}, syncState: {} } })) });
     browser.fetch.mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve; }));
     browser.element("dc-grid").children[0].children[2].children[1].children[2].dispatch("click");
     await flush();
     expect(browser.element("dc-load-more").disabled).toBe(true);
     browser.element("dc-load-more").dispatch("click");
-    expect(browser.fetch).toHaveBeenCalledTimes(5);
+    expect(browser.fetch).toHaveBeenCalledTimes(4);
     if (!finishRefresh) throw new Error("Replacement request did not start");
     finishRefresh({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ data: [], pageInfo: { hasNextPage: false } })) });
     await flush();

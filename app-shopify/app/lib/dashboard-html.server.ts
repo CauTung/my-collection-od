@@ -271,6 +271,20 @@ export function buildDashboardHtml(pathPrefix: string): string {
       return data.syncState;
     });
   }
+  // Compute stats directly from the items already in memory.
+  // Used as an immediate update after CRUD so the UI reflects
+  // the new totals without waiting for Shopify Metafield cache propagation.
+  function renderStatsFromItems() {
+    var totalItems = 0;
+    var totalValue = 0;
+    currentItems.forEach(function (item) {
+      var qty = numericValue(item.quantity_owned);
+      totalItems += qty;
+      var val = item.current_market_value != null ? numericValue(item.current_market_value) : numericValue(item.purchase_price);
+      totalValue += val * qty;
+    });
+    renderStats({ total_items: totalItems, total_value: Number(totalValue.toFixed(2)) });
+  }
   function loadCollection(after, append) {
     var generation = ++collectionGeneration;
     byId("dc-load-more").disabled = true;
@@ -424,7 +438,20 @@ export function buildDashboardHtml(pathPrefix: string): string {
       formState.submitting = false;
       closeItemForm();
       showToast(method === "POST" ? "Item added" : "Item updated");
-      return Promise.all([loadStats(), loadCollection(null, false)]).catch(function (error) {
+      // Reload the collection list first so currentItems is up to date,
+      // then render stats from those items immediately (optimistic, no Metafield latency).
+      // In parallel, fetch server-side cached stats after a short delay so the
+      // display stays accurate once Shopify has propagated the recalculation.
+      loadCollection(null, false).then(function () {
+        renderStatsFromItems();
+        // Give Shopify ~1.2s to propagate the recalculated Metafield cache
+        // before we read it back, so the server stats replace our estimate.
+        setTimeout(function () {
+          loadStats().catch(function (error) {
+            console.warn("Stats refresh after save failed:", error.message);
+          });
+        }, 1200);
+      }).catch(function (error) {
         showToast("Item saved, but collection refresh failed: " + error.message, true);
       });
     }).catch(function (error) {
@@ -440,7 +467,10 @@ export function buildDashboardHtml(pathPrefix: string): string {
     var method = item.in_wishlist ? "DELETE" : "POST";
     apiFetch("/" + encodeURIComponent(item.item_id) + "/wishlist", { method: method }).then(function () {
       showToast(item.in_wishlist ? "Removed from wishlist" : "Added to wishlist");
-      return loadCollection(null, false).catch(function (error) { showToast("Wishlist saved, but collection refresh failed: " + error.message, true); });
+      return loadCollection(null, false).then(function () {
+        renderStatsFromItems();
+        setTimeout(function () { loadStats().catch(function (e) { console.warn("Stats refresh failed:", e.message); }); }, 1200);
+      }).catch(function (error) { showToast("Wishlist saved, but collection refresh failed: " + error.message, true); });
     }).catch(function (error) { showToast("Wishlist failed: " + error.message, true); }).finally(function () { pendingItems.delete(item.item_id); renderGrid(currentItems); });
   }
   function deleteItem(item) {
@@ -450,7 +480,10 @@ export function buildDashboardHtml(pathPrefix: string): string {
     renderGrid(currentItems);
     apiFetch("/" + encodeURIComponent(item.item_id), { method: "DELETE" }).then(function () {
       showToast("Item removed");
-      return Promise.all([loadStats(), loadCollection(null, false)]).catch(function (error) { showToast("Item removed, but collection refresh failed: " + error.message, true); });
+      return loadCollection(null, false).then(function () {
+        renderStatsFromItems();
+        setTimeout(function () { loadStats().catch(function (e) { console.warn("Stats refresh failed:", e.message); }); }, 1200);
+      }).catch(function (error) { showToast("Item removed, but collection refresh failed: " + error.message, true); });
     }).catch(function (error) { showToast("Delete failed: " + error.message, true); }).finally(function () { pendingItems.delete(item.item_id); renderGrid(currentItems); });
   }
 
