@@ -61,21 +61,27 @@ async function actionHandler({ request, params }: ActionFunctionArgs) {
     // Extract exactly what we want to update, excluding idempotency_key
     const updates = Object.fromEntries(Object.entries(data).filter(([k]) => k !== "idempotency_key"));
 
+    let updatedItem: Awaited<ReturnType<typeof updateCollectionItem>>;
     try {
-      await updateCollectionItem(session.customer_id, itemId, updates);
+      updatedItem = await updateCollectionItem(session.customer_id, itemId, updates);
     } catch (error) {
       releaseIdempotencyClaim(idempotencyScope, idempotencyKey);
       throw error;
     }
 
-    // Background stats update
+    let stats: Awaited<ReturnType<typeof recalculateAndCacheStats>> | undefined;
     try {
-      await recalculateAndCacheStats(session.customer_id);
+      stats = await recalculateAndCacheStats(session.customer_id, updatedItem);
     } catch (error) {
       logger.error("Failed to update stats after manual item update", { error: String(error) });
     }
 
-    const responseBody = { success: true, message: "Item updated successfully" };
+    const responseBody = {
+      success: true,
+      message: "Item updated successfully",
+      data: updatedItem,
+      stats,
+    };
     setIdempotentResult(idempotencyScope, idempotencyKey, responseBody);
 
     return new Response(JSON.stringify(responseBody), { status: 200, headers: { "Content-Type": "application/json" } });

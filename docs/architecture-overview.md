@@ -183,7 +183,12 @@ Shopify App Proxy ký từng request tới `/api/collection*`
     → metaobject.server.ts CRUD
     → mutation fail: release processing claim rồi rethrow để cùng request retry được
     → mutation success: cache exact result
-    → recalculateAndCacheStats() (phân trang metaobjects, chấp nhận nullable optional fields từ Shopify, validate customer_id/is_deleted từng node, parse strict decimal, cursor advance guard)
+    → recalculateAndCacheStats(saved item) (phân trang metaobjects, overlay saved item khi search index chậm, validate customer_id/is_deleted từng node, parse strict decimal, cursor advance guard)
+    → response trả saved item + authoritative stats để dashboard render ngay, không chờ Metaobject search indexing
+
+Wishlist/Unwishlist button → POST/DELETE `/api/collection/:item_id/wishlist`
+    → verify item ownership → call WishlistAdapter → persist `in_wishlist` on collection Metaobject
+    → return updated item → replace the matching dashboard card immediately without a collection search refresh
 ```
 
 ---
@@ -249,6 +254,8 @@ The Admin GraphQL client validates response envelopes before returning data. Mis
 
 Manual collection entry accepts a numeric Shopify product ID in the customer-facing form and normalizes it to the canonical `gid://shopify/Product/{id}` representation at validation time. Existing canonical product GIDs remain accepted for compatibility; webhook and batch-sync paths continue to use canonical GIDs internally.
 
+Successful manual Add/Edit responses include the saved item and, when recalculation succeeds, authoritative collection stats. Stats calculation scans every collection page and overlays the just-saved item by `item_id`; if Shopify search indexing has not returned a new item yet, the item is explicitly added once. The storefront updates its in-memory grid and totals directly from that response. It does not immediately replace the grid with a Metaobject search result, because indexing lag can temporarily hide a newly added item. If recalculation fails, the UI preserves the last cached totals and reports that totals could not be refreshed instead of recomputing an incorrect subtotal from loaded pages only.
+
 Yotpo/Klaviyo still log mock outcomes only; their environment placeholders are not runtime credentials. `SHOPIFY_CLIENT_ID` and `APP_HOST` are operator references and are not consumed by the application. Actual proxy/callback configuration lives in Shopify configuration. Required runtime values are `SHOPIFY_APP_SECRET`, `SHOPIFY_ADMIN_ACCESS_TOKEN`, and `SHOPIFY_SHOP_DOMAIN`. Build performs no schema mutation. Tests now fail when no test files are discovered.
 
 | Date | Change | Reason |
@@ -256,6 +263,8 @@ Yotpo/Klaviyo still log mock outcomes only; their environment placeholders are n
 | 2026-09-07 | Completed GraphQL/setup failure classification and shared storefront error handling | Prevent false successful setup, unsafe replay, and lost UI errors |
 | 2026-09-07 | Centralized shared namespace/classification configuration and replaced template README/env guidance | Prevent setup/runtime drift and inaccurate owner handover |
 | 2026-09-08 | Added historical order line-item continuation pagination (AUD-035) and collection stats cache integrity hardening | Prevent silent order truncation for large orders and protect cached aggregate stats against malformed or cross-customer items |
+| 2026-09-12 | Returned saved manual CRUD items and recalculated stats in mutation responses | Show newly added products and updated totals immediately without a page reload or search-index refresh |
+| 2026-09-12 | Persisted quick Wishlist/Unwishlist actions to `collection_item.in_wishlist` and returned the updated item | Make card actions behave like the Edit checkbox despite the MVP no-op wishlist adapter |
 
 See `docs/audit/staging-verification.md` for remaining Shopify, serverless, privacy, and human verification gates. No live schema migration or deployment is implied by local verification.
 
@@ -263,5 +272,7 @@ See `docs/audit/staging-verification.md` for remaining Shopify, serverless, priv
 ### Storefront UI error and request lifecycle (2026-09-08)
 
 Scoped hidden selectors override explicit dashboard display rules, including pagination and edit-only fields. Product ID is disabled during Edit so its Add-only numeric validation cannot block updates. Collection and stats loaders propagate infrastructure failures to `withErrorHandler`; the browser displays a recoverable loading error with Retry instead of treating failures as empty collections or zero totals. Collection request generations discard superseded results, appended records are deduplicated by item ID, and per-item mutation locks disable wishlist/edit/delete until completion. Mutation success and subsequent refresh failure have separate messages. Card actions wrap on narrow screens. The sync description derives both order and year limits from constants.
+
+Quick Wishlist/Unwishlist actions persist the native `in_wishlist` field after the adapter succeeds, then return and render the updated item directly. The current `NullWishlistAdapter` remains the vendor-neutral MVP integration boundary; native Metaobject state is what keeps the dashboard button and Edit checkbox consistent.
 
 This correction does not establish feature completeness: URL-backed catalog filters/sort, grid/list selection, double-confirm deletion, clearing persisted optional fields, and preserving all loaded pages after a mutation remain review findings. Browser DOM tests use mocked API responses; Shopify dev-store and storefront theme verification remain required.

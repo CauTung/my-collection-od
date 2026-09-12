@@ -10,10 +10,9 @@
 import { type ActionFunctionArgs } from "react-router";
 import { authenticateAppProxyRequest } from "~/lib/session.server";
 import { wishlistAdapter } from "~/lib/integrations/wishlist-adapter";
-import { getCollectionItem } from "~/lib/metaobject.server";
+import { getCollectionItem, updateCollectionItem } from "~/lib/metaobject.server";
 import { withErrorHandler, AppError } from "~/lib/error-handler.server";
 import { ErrorCode } from "~/types";
-import { logger } from "~/lib/logger.server";
 
 async function actionHandler({ request, params }: ActionFunctionArgs) {
   const session = authenticateAppProxyRequest(request);
@@ -32,31 +31,27 @@ async function actionHandler({ request, params }: ActionFunctionArgs) {
   const productId = item.product_id;
 
   if (request.method === "POST") {
-    try {
-      await wishlistAdapter.addToWishlist(session.customer_id, productId);
-      return new Response(JSON.stringify({ success: true, message: "Added to wishlist" }), { 
-        status: 200, headers: { "Content-Type": "application/json" } 
-      });
-    } catch (error) {
-      logger.error("Wishlist integration failed on add", { error: String(error) });
-      return new Response(JSON.stringify({ success: false, message: "Wishlist integration failed" }), { 
-        status: 500, headers: { "Content-Type": "application/json" } 
-      });
-    }
+    await wishlistAdapter.addToWishlist(session.customer_id, productId);
+    const updatedItem = await updateCollectionItem(session.customer_id, itemId, {
+      in_wishlist: true,
+    });
+    return Response.json({
+      success: true,
+      message: "Added to wishlist",
+      data: updatedItem,
+    });
   }
 
   if (request.method === "DELETE") {
-    try {
-      await wishlistAdapter.removeFromWishlist(session.customer_id, productId);
-      return new Response(JSON.stringify({ success: true, message: "Removed from wishlist" }), { 
-        status: 200, headers: { "Content-Type": "application/json" } 
-      });
-    } catch (error) {
-      logger.error("Wishlist integration failed on remove", { error: String(error) });
-      return new Response(JSON.stringify({ success: false, message: "Wishlist integration failed" }), { 
-        status: 500, headers: { "Content-Type": "application/json" } 
-      });
-    }
+    await wishlistAdapter.removeFromWishlist(session.customer_id, productId);
+    const updatedItem = await updateCollectionItem(session.customer_id, itemId, {
+      in_wishlist: false,
+    });
+    return Response.json({
+      success: true,
+      message: "Removed from wishlist",
+      data: updatedItem,
+    });
   }
 
   return new Response("Method Not Allowed", { status: 405 });

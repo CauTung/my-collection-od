@@ -88,14 +88,14 @@ async function actionHandler({ request }: ActionFunctionArgs) {
     throw error;
   }
 
-  // Background stats update
+  let stats: Awaited<ReturnType<typeof recalculateAndCacheStats>> | undefined;
   try {
-    await recalculateAndCacheStats(session.customer_id);
+    stats = await recalculateAndCacheStats(session.customer_id, newItem);
   } catch (error) {
     logger.error("Failed to update stats after manual item creation", { error: String(error) });
   }
 
-  const responseBody = { success: true, data: newItem };
+  const responseBody = { success: true, data: newItem, stats };
   setIdempotentResult(idempotencyScope, idempotencyKey, responseBody);
 
   return new Response(JSON.stringify(responseBody), { status: 201, headers: { "Content-Type": "application/json" } });

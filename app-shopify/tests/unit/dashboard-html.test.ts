@@ -96,6 +96,19 @@ describe("dashboard browser behavior", () => {
   it("blocks repeated wishlist mutations while the item is busy", async () => {
     const browser = harness();
     await flush();
+    browser.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({
+        data: {
+          item_id: "one",
+          product_id: "gid://shopify/Product/1",
+          quantity_owned: 1,
+          user_notes: "Original",
+          in_wishlist: true,
+        },
+      })),
+    });
     const button = browser.element("dc-grid").children[0].children[2].children[1].children[0];
     button.dispatch("click");
     button.dispatch("click");
@@ -103,6 +116,112 @@ describe("dashboard browser behavior", () => {
     expect(browser.element("dc-grid").children[0].children[2].children[1].children.map((action) => action.disabled)).toEqual([true, true, true]);
     await flush();
     expect(browser.element("dc-grid").children[0].children[2].children[1].children.map((action) => action.disabled)).toEqual([false, false, false]);
+  });
+  it("updates wishlist and unwishlist state directly from each mutation response", async () => {
+    const browser = harness();
+    await flush();
+    browser.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({
+        data: {
+          item_id: "one",
+          product_id: "gid://shopify/Product/1",
+          quantity_owned: 1,
+          user_notes: "Original",
+          in_wishlist: true,
+        },
+      })),
+    });
+    browser.element("dc-grid").children[0].children[2].children[1].children[0].dispatch("click");
+    await flush();
+
+    expect(browser.fetch.mock.calls[2][1]?.method).toBe("POST");
+    expect(browser.element("dc-grid").children[0].children[2].children[1].children[0].textContent).toBe("Unwishlist");
+
+    browser.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({
+        data: {
+          item_id: "one",
+          product_id: "gid://shopify/Product/1",
+          quantity_owned: 1,
+          user_notes: "Original",
+          in_wishlist: false,
+        },
+      })),
+    });
+    browser.element("dc-grid").children[0].children[2].children[1].children[0].dispatch("click");
+    await flush();
+
+    expect(browser.fetch.mock.calls[3][1]?.method).toBe("DELETE");
+    expect(browser.element("dc-grid").children[0].children[2].children[1].children[0].textContent).toBe("Wishlist");
+    expect(browser.fetch).toHaveBeenCalledTimes(4);
+  });
+  it("keeps wishlist state unchanged and unlocks controls after a failed mutation", async () => {
+    const browser = harness();
+    await flush();
+    browser.fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve(JSON.stringify({ message: "Wishlist persistence failed" })),
+    });
+    browser.element("dc-grid").children[0].children[2].children[1].children[0].dispatch("click");
+    await flush();
+
+    const actions = browser.element("dc-grid").children[0].children[2].children[1];
+    expect(actions.children[0].textContent).toBe("Wishlist");
+    expect(actions.children.map((action) => action.disabled)).toEqual([false, false, false]);
+    expect(browser.toasts()).toContain("Wishlist failed: Wishlist persistence failed");
+  });
+  it("rejects malformed wishlist success responses without changing local state", async () => {
+    const browser = harness();
+    await flush();
+    browser.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({ success: true })),
+    });
+    browser.element("dc-grid").children[0].children[2].children[1].children[0].dispatch("click");
+    await flush();
+
+    const actions = browser.element("dc-grid").children[0].children[2].children[1];
+    expect(actions.children[0].textContent).toBe("Wishlist");
+    expect(actions.children.map((action) => action.disabled)).toEqual([false, false, false]);
+    expect(browser.toasts()).toContain("Wishlist failed: Wishlist response is missing item data");
+  });
+  it("keeps unwishlist state unchanged and unlocks controls after a failed removal", async () => {
+    const browser = harness();
+    await flush();
+    browser.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({
+        data: {
+          item_id: "one",
+          product_id: "gid://shopify/Product/1",
+          quantity_owned: 1,
+          user_notes: "Original",
+          in_wishlist: true,
+        },
+      })),
+    });
+    browser.element("dc-grid").children[0].children[2].children[1].children[0].dispatch("click");
+    await flush();
+    browser.fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve(JSON.stringify({ message: "Wishlist removal failed" })),
+    });
+    browser.element("dc-grid").children[0].children[2].children[1].children[0].dispatch("click");
+    await flush();
+
+    const actions = browser.element("dc-grid").children[0].children[2].children[1];
+    expect(browser.fetch.mock.calls[3][1]?.method).toBe("DELETE");
+    expect(actions.children[0].textContent).toBe("Unwishlist");
+    expect(actions.children.map((action) => action.disabled)).toEqual([false, false, false]);
+    expect(browser.toasts()).toContain("Wishlist failed: Wishlist removal failed");
   });
   it("blocks pagination during a replacement refresh after deletion", async () => {
     const browser = harness();
@@ -127,24 +246,93 @@ describe("dashboard browser behavior", () => {
     const browser = harness(prefix);
     expect(browser.fetch.mock.calls.map(([url]) => url)).toEqual([`${APP_PROXY_DEFAULT_PATH_PREFIX}/api/collection/stats`, `${APP_PROXY_DEFAULT_PATH_PREFIX}/api/collection?first=${COLLECTION_PAGE_SIZE}`]);
   });
-  it("reports a refresh failure after saving without reopening or resubmitting the form", async () => {
+  it("renders a newly created item and authoritative totals without reloading the collection", async () => {
     const browser = harness();
     await flush();
     browser.element("dc-add-btn").focus();
     browser.element("dc-add-btn").dispatch("click");
-    browser.fetch.mockRejectedValueOnce(new Error("save offline"));
+    browser.element("dc-product-id").value = "123";
+    browser.element("dc-quantity").value = "2";
+    browser.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      text: () => Promise.resolve(JSON.stringify({
+        data: {
+          item_id: "new-item",
+          product_id: "gid://shopify/Product/123",
+          quantity_owned: 2,
+          purchase_price: 25,
+          in_wishlist: false,
+        },
+        stats: { total_items: 3, total_value: 75 },
+      })),
+    });
     browser.element("dc-item-form").dispatch("submit");
     await flush();
-    expect(browser.element("dc-submit-item").disabled).toBe(false);
-    browser.fetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve("{}") });
-    browser.fetch.mockRejectedValueOnce(new Error("refresh offline"));
-    browser.element("dc-item-form").dispatch("submit");
-    browser.element("dc-item-form").dispatch("submit");
-    await flush();
-    expect(browser.fetch.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(2);
+
+    expect(browser.fetch).toHaveBeenCalledTimes(3);
+    expect(browser.fetch.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
     expect(browser.element("dc-item-modal").hidden).toBe(true);
     expect(browser.document.activeElement).toBe(browser.element("dc-add-btn"));
-    expect(browser.toasts()).toContain("Item saved, but collection refresh failed: refresh offline");
+    expect(browser.element("dc-grid").children).toHaveLength(2);
+    expect(browser.element("dc-grid").children[0].children[0].textContent).toBe("Shopify Product 123");
+    expect(browser.element("dc-stats").children[0].children[1].textContent).toBe("3");
+    expect(browser.element("dc-stats").children[1].children[1].textContent).toBe("$75");
+    expect(browser.toasts()).toContain("Item added");
+  });
+  it("renders an edited item and authoritative totals from the mutation response", async () => {
+    const browser = harness();
+    await flush();
+    browser.element("dc-grid").children[0].children[2].children[1].children[1].dispatch("click");
+    browser.element("dc-quantity").value = "4";
+    browser.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({
+        data: {
+          item_id: "one",
+          product_id: "gid://shopify/Product/1",
+          quantity_owned: 4,
+          user_notes: "Original",
+          in_wishlist: false,
+        },
+        stats: { total_items: 4, total_value: 100 },
+      })),
+    });
+    browser.element("dc-item-form").dispatch("submit");
+    await flush();
+
+    expect(browser.fetch).toHaveBeenCalledTimes(3);
+    expect(browser.fetch.mock.calls.filter(([, options]) => options?.method === "PUT")).toHaveLength(1);
+    expect(browser.element("dc-grid").children).toHaveLength(1);
+    expect(browser.element("dc-grid").children[0].children[1].children[0].textContent).toBe("Quantity: 4");
+    expect(browser.element("dc-stats").children[0].children[1].textContent).toBe("4");
+    expect(browser.element("dc-stats").children[1].children[1].textContent).toBe("$100");
+    expect(browser.toasts()).toContain("Item updated");
+  });
+  it("preserves cached totals instead of calculating a subtotal when stats recalculation fails", async () => {
+    const browser = harness();
+    await flush();
+    browser.element("dc-add-btn").dispatch("click");
+    browser.element("dc-product-id").value = "456";
+    browser.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      text: () => Promise.resolve(JSON.stringify({
+        data: {
+          item_id: "new-item-without-stats",
+          product_id: "gid://shopify/Product/456",
+          quantity_owned: 5,
+          in_wishlist: false,
+        },
+      })),
+    });
+    browser.element("dc-item-form").dispatch("submit");
+    await flush();
+
+    expect(browser.element("dc-grid").children).toHaveLength(2);
+    expect(browser.element("dc-stats").children[0].children[1].textContent).toBe("1");
+    expect(browser.toasts()).toContain("Item saved, but totals could not be refreshed.");
   });
   it("focuses and traps the dialog then restores focus on Escape", async () => {
     const browser = harness();

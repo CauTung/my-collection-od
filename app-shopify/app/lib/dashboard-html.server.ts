@@ -59,7 +59,7 @@ export function buildDashboardHtml(pathPrefix: string): string {
   .dc-card-actions { flex-wrap:wrap; display:flex; gap:.4rem; }
   .dc-empty,.dc-loading { color:#777; grid-column:1/-1; padding:3rem 1rem; text-align:center; }
   .dc-load-more { display:block; margin:1.25rem auto 0; }
-  .dc-toast { background:#1a1a2e; border-radius:8px; bottom:2rem; color:#fff; padding:.75rem 1rem; position:fixed; right:2rem; z-index:10001; }
+  .dc-toast { background:#1a1a2e; border-radius:8px; bottom:2rem; color:#fff; padding:.75rem 1rem; position:fixed; right:2rem; z-index:10002; }
   .dc-toast-error { background:#c62828; }
   .dc-modal { align-items:center; background:rgba(0,0,0,.55); display:flex; inset:0; justify-content:center; padding:1rem; position:fixed; z-index:10000; }
   .dc-modal[hidden] { display:none; }
@@ -434,26 +434,26 @@ export function buildDashboardHtml(pathPrefix: string): string {
     if (!formState.itemId) payload.product_id = byId("dc-product-id").value.trim();
     var path = formState.itemId ? ("/" + encodeURIComponent(formState.itemId)) : "";
     var method = formState.itemId ? "PUT" : "POST";
-    apiFetch(path, { method: method, body: JSON.stringify(payload) }).then(function () {
+    var savedItemId = formState.itemId;
+    apiFetch(path, { method: method, body: JSON.stringify(payload) }).then(function (responsePayload) {
       formState.submitting = false;
       closeItemForm();
       showToast(method === "POST" ? "Item added" : "Item updated");
-      // Reload the collection list first so currentItems is up to date,
-      // then render stats from those items immediately (optimistic, no Metafield latency).
-      // In parallel, fetch server-side cached stats after a short delay so the
-      // display stays accurate once Shopify has propagated the recalculation.
-      loadCollection(null, false).then(function () {
-        renderStatsFromItems();
-        // Give Shopify ~1.2s to propagate the recalculated Metafield cache
-        // before we read it back, so the server stats replace our estimate.
-        setTimeout(function () {
-          loadStats().catch(function (error) {
-            console.warn("Stats refresh after save failed:", error.message);
+      // The mutation response is the source of truth for the saved item. Rendering it
+      // directly avoids waiting for Shopify Metaobject search indexing after creation.
+      var savedItem = responsePayload && responsePayload.data;
+      if (savedItem && savedItem.item_id) {
+        if (method === "POST") {
+          currentItems = [savedItem].concat(currentItems);
+        } else {
+          currentItems = currentItems.map(function (existing) {
+            return existing.item_id === savedItemId ? savedItem : existing;
           });
-        }, 1200);
-      }).catch(function (error) {
-        showToast("Item saved, but collection refresh failed: " + error.message, true);
-      });
+        }
+        renderGrid(currentItems);
+      }
+      if (responsePayload && responsePayload.stats) renderStats(responsePayload.stats);
+      else showToast("Item saved, but totals could not be refreshed.", true);
     }).catch(function (error) {
       formState.submitting = false;
       submit.disabled = false;
@@ -465,12 +465,13 @@ export function buildDashboardHtml(pathPrefix: string): string {
     pendingItems.add(item.item_id);
     renderGrid(currentItems);
     var method = item.in_wishlist ? "DELETE" : "POST";
-    apiFetch("/" + encodeURIComponent(item.item_id) + "/wishlist", { method: method }).then(function () {
+    apiFetch("/" + encodeURIComponent(item.item_id) + "/wishlist", { method: method }).then(function (payload) {
+      var savedItem = payload && payload.data;
+      if (!savedItem || savedItem.item_id !== item.item_id) throw new Error("Wishlist response is missing item data");
+      currentItems = currentItems.map(function (existing) {
+        return existing.item_id === item.item_id ? savedItem : existing;
+      });
       showToast(item.in_wishlist ? "Removed from wishlist" : "Added to wishlist");
-      return loadCollection(null, false).then(function () {
-        renderStatsFromItems();
-        setTimeout(function () { loadStats().catch(function (e) { console.warn("Stats refresh failed:", e.message); }); }, 1200);
-      }).catch(function (error) { showToast("Wishlist saved, but collection refresh failed: " + error.message, true); });
     }).catch(function (error) { showToast("Wishlist failed: " + error.message, true); }).finally(function () { pendingItems.delete(item.item_id); renderGrid(currentItems); });
   }
   function deleteItem(item) {

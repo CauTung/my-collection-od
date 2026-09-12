@@ -18,6 +18,7 @@ import { awardLoyaltyPoints } from "./integrations/yotpo.server";
 import { syncCustomerToKlaviyo } from "./integrations/klaviyo.server";
 import { COLLECTION_ITEM_METAOBJECT_TYPE, METAOBJECT_MAX_PAGE_SIZE } from "~/config/constants";
 import { buildMetaobjectFieldFilter } from "./metaobject-search.server";
+import type { CollectionItem } from "~/types";
 
 interface StatsResponse {
   metaobjects?: {
@@ -30,16 +31,25 @@ interface StatsResponse {
  * Recalculate stats by fetching all active items for a customer and summing them up.
  * Caches the result in Customer Metafields.
  * @param customerId - Owner of the collection to aggregate.
+ * @param authoritativeItem - A just-created or updated item that must override a
+ * potentially stale Metaobject search result while Shopify indexing catches up.
  * @returns Validated totals after a successful cache write.
  * @throws If reads fail, ownership or pagination is invalid, or values are malformed.
  * Cache writes occur only after the entire collection has been validated.
  */
-export async function recalculateAndCacheStats(customerId: string): Promise<CustomerStats> {
+export async function recalculateAndCacheStats(
+  customerId: string,
+  authoritativeItem?: CollectionItem
+): Promise<CustomerStats> {
   let hasNextPage = true;
   let cursor: string | null = null;
   let totalItemsCount = 0;
   let totalValueSum = 0;
+  let authoritativeItemSeen = false;
   const seenCursors = new Set<string>();
+  const authoritativeContribution = authoritativeItem
+    ? getAuthoritativeItemContribution(authoritativeItem, customerId)
+    : undefined;
 
   const queryStr = [
     buildMetaobjectFieldFilter("customer_id", customerId),
@@ -89,12 +99,20 @@ export async function recalculateAndCacheStats(customerId: string): Promise<Cust
         if (fields.get("customer_id") !== customerId || fields.get("is_deleted") !== "false") {
           throw new Error("Stats item ownership or active status is invalid");
         }
-        const quantity = parseStatsNumber(fields.get("quantity_owned"));
-        if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error("Stats quantity is invalid");
-        const marketValue = fields.get("current_market_value");
-        const purchasePrice = fields.get("purchase_price");
-        const value = marketValue !== undefined ? parseStatsNumber(marketValue)
-          : purchasePrice !== undefined ? parseStatsNumber(purchasePrice) : 0;
+        let quantity: number;
+        let value: number;
+        if (authoritativeItem && fields.get("item_id") === authoritativeItem.item_id) {
+          if (authoritativeItemSeen) throw new Error("Stats contains a duplicate authoritative item");
+          authoritativeItemSeen = true;
+          ({ quantity, value } = authoritativeContribution!);
+        } else {
+          quantity = parseStatsNumber(fields.get("quantity_owned"));
+          if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error("Stats quantity is invalid");
+          const marketValue = fields.get("current_market_value");
+          const purchasePrice = fields.get("purchase_price");
+          value = marketValue !== undefined ? parseStatsNumber(marketValue)
+            : purchasePrice !== undefined ? parseStatsNumber(purchasePrice) : 0;
+        }
         totalItemsCount += quantity;
         totalValueSum += value * quantity;
         if (!Number.isSafeInteger(totalItemsCount) || !Number.isFinite(totalValueSum)) {
@@ -110,6 +128,16 @@ export async function recalculateAndCacheStats(customerId: string): Promise<Cust
       if (nextCursor) seenCursors.add(nextCursor);
       cursor = nextCursor;
 
+    }
+
+    // Metaobject search indexing can lag behind a successful create mutation. Include
+    // the saved item explicitly when it is not present in the freshly scanned pages.
+    if (authoritativeContribution && !authoritativeItemSeen) {
+      totalItemsCount += authoritativeContribution.quantity;
+      totalValueSum += authoritativeContribution.value * authoritativeContribution.quantity;
+      if (!Number.isSafeInteger(totalItemsCount) || !Number.isFinite(totalValueSum)) {
+        throw new Error("Stats totals exceed supported numeric range");
+      }
     }
 
     const stats: CustomerStats = {
@@ -144,6 +172,23 @@ export async function recalculateAndCacheStats(customerId: string): Promise<Cust
     // Rethrow to let caller decide whether to swallow or fail
     throw error;
   }
+}
+
+function getAuthoritativeItemContribution(
+  item: CollectionItem,
+  customerId: string
+): { quantity: number; value: number } {
+  if (!item.item_id || item.customer_id !== customerId || item.is_deleted) {
+    throw new Error("Authoritative stats item ownership or active status is invalid");
+  }
+  if (!Number.isSafeInteger(item.quantity_owned) || item.quantity_owned < 1) {
+    throw new Error("Authoritative stats quantity is invalid");
+  }
+  const value = item.current_market_value ?? item.purchase_price ?? 0;
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("Authoritative stats value is invalid");
+  }
+  return { quantity: item.quantity_owned, value };
 }
 
 /** Parse a complete nonnegative decimal; partial parses must never poison cached totals. */

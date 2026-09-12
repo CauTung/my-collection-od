@@ -31,6 +31,74 @@ beforeEach(() => {
 });
 
 describe("recalculateAndCacheStats", () => {
+  it("includes a newly created authoritative item when Shopify search indexing has not returned it", async () => {
+    mockGraphQL.mockResolvedValueOnce({
+      data: {
+        metaobjects: {
+          nodes: [{
+            fields: [
+              { key: "item_id", value: "existing-item" },
+              { key: "customer_id", value: CUSTOMER_GID },
+              { key: "is_deleted", value: "false" },
+              { key: "quantity_owned", value: "1" },
+              { key: "purchase_price", value: "10" },
+            ],
+          }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    });
+
+    const stats = await recalculateAndCacheStats(CUSTOMER_GID, {
+      item_id: "new-item",
+      customer_id: CUSTOMER_GID,
+      product_id: "gid://shopify/Product/2",
+      source: "manual_entry",
+      quantity_owned: 2,
+      date_added_to_collection: "2026-09-12",
+      current_market_value: 25,
+      in_wishlist: false,
+      is_deleted: false,
+    });
+
+    expect(stats).toEqual({ total_items: 3, total_value: 60 });
+    expect(mockUpdateMetafields).toHaveBeenCalledWith(CUSTOMER_GID, { total_items: 3, total_value: 60 });
+  });
+
+  it("overrides stale searched fields with the item returned by the update mutation", async () => {
+    mockGraphQL.mockResolvedValueOnce({
+      data: {
+        metaobjects: {
+          nodes: [{
+            fields: [
+              { key: "item_id", value: "updated-item" },
+              { key: "customer_id", value: CUSTOMER_GID },
+              { key: "is_deleted", value: "false" },
+              { key: "quantity_owned", value: "1" },
+              { key: "current_market_value", value: "10" },
+            ],
+          }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    });
+
+    const stats = await recalculateAndCacheStats(CUSTOMER_GID, {
+      item_id: "updated-item",
+      customer_id: CUSTOMER_GID,
+      product_id: "gid://shopify/Product/1",
+      source: "manual_entry",
+      quantity_owned: 4,
+      date_added_to_collection: "2026-09-12",
+      current_market_value: 25,
+      in_wishlist: false,
+      is_deleted: false,
+    });
+
+    expect(stats).toEqual({ total_items: 4, total_value: 100 });
+    expect(mockUpdateMetafields).toHaveBeenCalledWith(CUSTOMER_GID, { total_items: 4, total_value: 100 });
+  });
+
   it("calculates stats correctly for a single page of items", async () => {
     mockGraphQL.mockResolvedValueOnce({
       data: {
